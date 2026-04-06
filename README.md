@@ -1,8 +1,21 @@
+<div align="center">
+  
 # DKST Translator AI
 
 Professional local LLM translation workspace designed for consistent style and context preservation.
 
+Main Screen
+![Main Screen](res/1.gif)
+
+<!-- Web Login
+<img src="res/web_login.png" alt="Web Login" width="250"> -->
+
+Mobile Screen
+![Web Screen](res/2.gif)
+
 [English](#english) | [한국어](#한국어)
+
+</div>
 
 ---
 
