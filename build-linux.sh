@@ -25,7 +25,12 @@ fi
 # 2. Dependency Installation (System-level)
 echo "[2/4] Checking and installing system dependencies..."
 if [ -x "$(command -v apt-get)" ]; then
-    sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
+    # Attempt to install libwebkit2gtk-4.1-dev first (for newer Ubuntu versions like 24.04)
+    if apt-cache show libwebkit2gtk-4.1-dev &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev build-essential pkg-config
+    else
+        sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
+    fi
 elif [ -x "$(command -v dnf)" ]; then
     sudo dnf install -y gtk3-devel webkit2gtk3-devel build-essential pkg-config
 elif [ -x "$(command -v pacman)" ]; then
