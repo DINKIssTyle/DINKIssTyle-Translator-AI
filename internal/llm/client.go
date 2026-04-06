@@ -302,13 +302,22 @@ func (c *Client) ListModels(settings ProviderSettings) ([]ModelInfo, error) {
 	return models, nil
 }
 
-func (c *Client) Translate(reqData TranslationRequest) error {
-	reqCtx, cancel, requestID := c.beginRequest()
-	defer cancel()
-	defer c.finishRequest(requestID)
+type translationHarnessMode struct {
+	emitLifecycle bool
+	clearAtStart  bool
+}
 
-	reqData.SourceText = preprocessSourceText(reqData.SourceText)
+type plannedTranslation struct {
+	chunkSize              int
+	chunks                 []smartChunk
+	openingSourceParagraph string
+}
 
+// chunkPlanner는 입력 텍스트를 실행 가능한 번역 청크 계획으로 바꾼다.
+// 전처리된 원문을 받아 스마트 청킹 여부, 청크 크기, 오프닝 앵커를 한 번에 계산한다.
+type chunkPlanner struct{}
+
+func (p chunkPlanner) plan(reqData TranslationRequest) plannedTranslation {
 	chunkSize := reqData.Settings.SmartChunkSize
 	if chunkSize <= 0 {
 		chunkSize = 2000
@@ -319,151 +328,128 @@ func (c *Client) Translate(reqData TranslationRequest) error {
 		chunks = buildSmartChunks(reqData.SourceText, chunkSize)
 	}
 	_, _ = chunkCharacterStats(chunks)
-	if len(chunks) <= 1 {
-		c.emitProgressWithMetrics(
-			"chunking",
-			"Generating translation",
-			"Translating the full text",
-			overallPassProgress(1, 1, reqData.Settings.EnablePostEdit, "translate"),
+
+	return plannedTranslation{
+		chunkSize:              chunkSize,
+		chunks:                 chunks,
+		openingSourceParagraph: leadingParagraph(reqData.SourceText, 420),
+	}
+}
+
+// draftTranslator는 초벌 번역 패스를 담당한다.
+// 실제 provider 분기와 draft 프롬프트 실행은 이 컴포넌트 안에서만 이뤄진다.
+type draftTranslator struct {
+	client *Client
+	reqCtx context.Context
+}
+
+func (t draftTranslator) translate(reqData TranslationRequest, options translationRuntimeOptions) (string, TranslationStatsPayload, error) {
+	if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
+		return t.client.translateWithLMStudio(t.reqCtx, reqData, options)
+	}
+	return t.client.translateWithCompatibleAPI(t.reqCtx, reqData, options)
+}
+
+// postEditPass는 선택적 proofread/post-edit 단계를 담당한다.
+// 포스트 에디트 활성화 여부, 진행률 이벤트, 실제 post-edit 호출을 한 곳에 모은다.
+type postEditPass struct {
+	client        *Client
+	reqCtx        context.Context
+	emitLifecycle bool
+}
+
+func (p postEditPass) apply(reqData TranslationRequest, draft string, options translationRuntimeOptions, currentChunk int, totalChunks int) (string, error) {
+	if !reqData.Settings.EnablePostEdit {
+		return draft, nil
+	}
+
+	if p.emitLifecycle {
+		label := "Post-editing translation"
+		detail := "Checking for mixed-language or garbled fragments"
+		if totalChunks > 1 {
+			label = fmt.Sprintf("Post-editing %s", options.ChunkLabel)
+			detail = "Checking this translated section for mixed-language or garbled fragments"
+		}
+		p.client.emitProgressWithMetrics(
+			"post_edit",
+			label,
+			detail,
+			overallPassProgress(totalChunks, currentChunk, reqData.Settings.EnablePostEdit, "post_edit"),
 			false,
-			buildProgressMetrics(1, 1, reqData.Settings.EnablePostEdit, "translate"),
+			buildProgressMetrics(totalChunks, currentChunk, reqData.Settings.EnablePostEdit, "post_edit"),
 		)
-		var (
-			text  string
-			stats TranslationStatsPayload
-			err   error
-		)
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			text, stats, err = c.translateWithLMStudio(reqCtx, reqData, translationRuntimeOptions{})
-		} else {
-			text, stats, err = c.translateWithCompatibleAPI(reqCtx, reqData, translationRuntimeOptions{})
-		}
-		if err != nil {
-			return err
-		}
-		if reqData.Settings.EnablePostEdit {
-			c.emitProgressWithMetrics(
-				"post_edit",
-				"Post-editing translation",
-				"Checking for mixed-language or garbled fragments",
-				overallPassProgress(1, 1, reqData.Settings.EnablePostEdit, "post_edit"),
-				false,
-				buildProgressMetrics(1, 1, reqData.Settings.EnablePostEdit, "post_edit"),
-			)
-			postEdited, err := c.postEditTranslation(reqCtx, reqData, text, translationRuntimeOptions{})
-			if err != nil {
-				return err
-			}
-			text = postEdited
-		}
-		text = cleanupTranslatedText(text)
-		if stats.InputTokens > 0 || stats.TotalOutputTokens > 0 {
-			c.emitStats(map[string]any{
-				"input_tokens":                stats.InputTokens,
-				"reasoning_output_tokens":     stats.ReasoningOutputTokens,
-				"time_to_first_token_seconds": stats.TimeToFirstTokenSeconds,
-				"tokens_per_second":           stats.TokensPerSecond,
-				"total_output_tokens":         stats.TotalOutputTokens,
-			})
-		}
-		c.emitProgress("done", "Done", "Translation complete", floatPtr(1), false)
-		c.emitComplete(TranslationCompletePayload{Text: text})
-		return nil
 	}
 
-	c.emitClear()
+	postEditOptions := options
+	postEditOptions.OverallProgressBase = derefFloat(overallPassProgress(totalChunks, currentChunk, reqData.Settings.EnablePostEdit, "post_edit"))
+	return p.client.postEditTranslation(p.reqCtx, reqData, draft, postEditOptions)
+}
 
-	aggregated := TranslationStatsPayload{}
-	var finalText strings.Builder
-	previousSummary := ""
-	openingSourceParagraph := leadingParagraph(reqData.SourceText, 420)
-	openingTranslatedParagraph := ""
-	for index, chunk := range chunks {
-		if err := reqCtx.Err(); err != nil {
-			return fmt.Errorf("translation cancelled")
-		}
+// contextMemory는 청크 간 이어져야 하는 문맥 기억을 관리한다.
+// 이전 요약, opening anchor, overlap 관련 runtime 옵션 생성과 갱신을 맡는다.
+type contextMemory struct {
+	settings                   ProviderSettings
+	instruction                string
+	previousSummary            string
+	openingSourceParagraph     string
+	openingTranslatedParagraph string
+}
 
-		chunkReq := reqData
-		chunkReq.SourceText = chunk.Text
-
-		options := translationRuntimeOptions{
-			ContextSummary:             previousSummary,
-			ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", index+1, len(chunks)),
-			OverlapContext:             chunk.OverlapContext,
-			OpeningSourceParagraph:     openingSourceParagraph,
-			OpeningTranslatedParagraph: openingTranslatedParagraph,
-			ProgressMetrics:            buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-			OverallProgressBase:        derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate")),
-		}
-		c.emitProgressWithMetrics(
-			"chunking",
-			fmt.Sprintf("Translating %s", options.ChunkLabel),
-			fmt.Sprintf("Smart chunking active for long text (%d chars)", chunkSize),
-			overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-			false,
-			buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-		)
-
-		var translated string
-		var stats TranslationStatsPayload
-		var err error
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			translated, stats, err = c.translateWithLMStudio(reqCtx, chunkReq, options)
-		} else {
-			translated, stats, err = c.translateWithCompatibleAPI(reqCtx, chunkReq, options)
-		}
-		if err != nil {
-			return err
-		}
-		if reqData.Settings.EnablePostEdit {
-			c.emitProgressWithMetrics(
-				"post_edit",
-				fmt.Sprintf("Post-editing %s", options.ChunkLabel),
-				"Checking this translated section for mixed-language or garbled fragments",
-				overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"),
-				false,
-				buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"),
-			)
-			postEditOptions := options
-			postEditOptions.OverallProgressBase = derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"))
-			postEdited, err := c.postEditTranslation(reqCtx, chunkReq, translated, postEditOptions)
-			if err != nil {
-				return err
-			}
-			translated = postEdited
-		}
-		translated = cleanupTranslatedText(translated)
-
-		if index > 0 && finalText.Len() > 0 && !strings.HasSuffix(finalText.String(), "\n") && !strings.HasPrefix(translated, "\n") {
-			finalText.WriteString("\n\n")
-			c.emitToken("\n\n")
-		}
-		finalText.WriteString(translated)
-		aggregated.InputTokens += stats.InputTokens
-		aggregated.ReasoningOutputTokens += stats.ReasoningOutputTokens
-		aggregated.TotalOutputTokens += stats.TotalOutputTokens
-		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
-		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
-		if openingTranslatedParagraph == "" {
-			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
-		}
+func newContextMemory(reqData TranslationRequest, openingSourceParagraph string) *contextMemory {
+	return &contextMemory{
+		settings:               reqData.Settings,
+		instruction:            reqData.Instruction,
+		openingSourceParagraph: openingSourceParagraph,
 	}
+}
 
-	if len(chunks) > 0 {
-		aggregated.TimeToFirstTokenSeconds = aggregated.TimeToFirstTokenSeconds / float64(len(chunks))
-		aggregated.TokensPerSecond = aggregated.TokensPerSecond / float64(len(chunks))
+func (m *contextMemory) runtimeOptions(chunk smartChunk, currentChunk int, totalChunks int) translationRuntimeOptions {
+	return translationRuntimeOptions{
+		ContextSummary:             m.previousSummary,
+		ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", currentChunk, totalChunks),
+		OverlapContext:             chunk.OverlapContext,
+		OpeningSourceParagraph:     m.openingSourceParagraph,
+		OpeningTranslatedParagraph: m.openingTranslatedParagraph,
+		ProgressMetrics:            buildProgressMetrics(totalChunks, currentChunk, m.settings.EnablePostEdit, "translate"),
+		OverallProgressBase:        derefFloat(overallPassProgress(totalChunks, currentChunk, m.settings.EnablePostEdit, "translate")),
 	}
+}
 
-	c.emitStats(map[string]any{
-		"input_tokens":                aggregated.InputTokens,
-		"reasoning_output_tokens":     aggregated.ReasoningOutputTokens,
-		"time_to_first_token_seconds": aggregated.TimeToFirstTokenSeconds,
-		"tokens_per_second":           aggregated.TokensPerSecond,
-		"total_output_tokens":         aggregated.TotalOutputTokens,
-	})
-	c.emitProgress("done", "Done", "Translation complete", floatPtr(1), false)
-	c.emitComplete(TranslationCompletePayload{Text: finalText.String()})
+func (m *contextMemory) update(sourceChunk string, translatedChunk string, combinedTranslation string) {
+	m.previousSummary = buildContextSummary(m.settings, m.instruction, sourceChunk, translatedChunk)
+	if m.openingTranslatedParagraph == "" {
+		m.openingTranslatedParagraph = leadingParagraph(combinedTranslation, 420)
+	}
+}
+
+// translationHarness는 번역 요청 하나를 실행하는 하네스다.
+// 입력 전처리, 청킹, 초벌 번역, 선택적 포스트 에디트, 문맥 계승, 결과 결합을
+// 한 구조 안에서 순차적으로 관리해 엔트리 포인트별 중복을 줄인다.
+type translationHarness struct {
+	client          *Client
+	reqCtx          context.Context
+	reqData         TranslationRequest
+	mode            translationHarnessMode
+	plan            plannedTranslation
+	draftTranslator draftTranslator
+	postEditor      postEditPass
+	contextMemory   *contextMemory
+
+	aggregated TranslationStatsPayload
+	finalText  strings.Builder
+}
+
+func (c *Client) Translate(reqData TranslationRequest) error {
+	reqCtx, cancel, requestID := c.beginRequest()
+	defer cancel()
+	defer c.finishRequest(requestID)
+
+	harness := newTranslationHarness(c, reqCtx, reqData, translationHarnessMode{emitLifecycle: true})
+	text, _, err := harness.run()
+	if err != nil {
+		return err
+	}
+	c.emitComplete(TranslationCompletePayload{Text: text})
 	return nil
 }
 
@@ -472,108 +458,8 @@ func (c *Client) TranslateText(reqData TranslationRequest) (string, TranslationS
 	defer cancel()
 	defer c.finishRequest(requestID)
 
-	reqData.SourceText = preprocessSourceText(reqData.SourceText)
-
-	chunkSize := reqData.Settings.SmartChunkSize
-	if chunkSize <= 0 {
-		chunkSize = 2000
-	}
-
-	chunks := []smartChunk{{Text: strings.TrimSpace(reqData.SourceText)}}
-	if reqData.Settings.EnableSmartChunking {
-		chunks = buildSmartChunks(reqData.SourceText, chunkSize)
-	}
-	_, _ = chunkCharacterStats(chunks)
-	if len(chunks) <= 1 {
-		var (
-			text  string
-			stats TranslationStatsPayload
-			err   error
-		)
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			text, stats, err = c.translateWithLMStudio(reqCtx, reqData, translationRuntimeOptions{})
-		} else {
-			text, stats, err = c.translateWithCompatibleAPI(reqCtx, reqData, translationRuntimeOptions{})
-		}
-		if err != nil {
-			return "", TranslationStatsPayload{}, err
-		}
-		if reqData.Settings.EnablePostEdit {
-			postEdited, err := c.postEditTranslation(reqCtx, reqData, text, translationRuntimeOptions{})
-			if err != nil {
-				return "", TranslationStatsPayload{}, err
-			}
-			text = postEdited
-		}
-		return cleanupTranslatedText(text), stats, nil
-	}
-
-	aggregated := TranslationStatsPayload{}
-	var finalText strings.Builder
-	previousSummary := ""
-	openingSourceParagraph := leadingParagraph(reqData.SourceText, 420)
-	openingTranslatedParagraph := ""
-	for index, chunk := range chunks {
-		if err := reqCtx.Err(); err != nil {
-			return "", TranslationStatsPayload{}, fmt.Errorf("translation cancelled")
-		}
-
-		chunkReq := reqData
-		chunkReq.SourceText = chunk.Text
-
-		options := translationRuntimeOptions{
-			ContextSummary:             previousSummary,
-			ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", index+1, len(chunks)),
-			OverlapContext:             chunk.OverlapContext,
-			OpeningSourceParagraph:     openingSourceParagraph,
-			OpeningTranslatedParagraph: openingTranslatedParagraph,
-			ProgressMetrics:            progressMetrics{CurrentChunk: index + 1, CompletedChunks: index, TotalChunks: len(chunks)},
-			OverallProgressBase:        derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate")),
-		}
-
-		var translated string
-		var stats TranslationStatsPayload
-		var err error
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			translated, stats, err = c.translateWithLMStudio(reqCtx, chunkReq, options)
-		} else {
-			translated, stats, err = c.translateWithCompatibleAPI(reqCtx, chunkReq, options)
-		}
-		if err != nil {
-			return "", TranslationStatsPayload{}, err
-		}
-		if reqData.Settings.EnablePostEdit {
-			postEditOptions := options
-			postEditOptions.OverallProgressBase = derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"))
-			postEdited, err := c.postEditTranslation(reqCtx, chunkReq, translated, postEditOptions)
-			if err != nil {
-				return "", TranslationStatsPayload{}, err
-			}
-			translated = postEdited
-		}
-		translated = cleanupTranslatedText(translated)
-
-		if index > 0 && finalText.Len() > 0 && !strings.HasSuffix(finalText.String(), "\n") && !strings.HasPrefix(translated, "\n") {
-			finalText.WriteString("\n\n")
-		}
-		finalText.WriteString(translated)
-		aggregated.InputTokens += stats.InputTokens
-		aggregated.ReasoningOutputTokens += stats.ReasoningOutputTokens
-		aggregated.TotalOutputTokens += stats.TotalOutputTokens
-		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
-		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
-		if openingTranslatedParagraph == "" {
-			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
-		}
-	}
-
-	if len(chunks) > 0 {
-		aggregated.TimeToFirstTokenSeconds = aggregated.TimeToFirstTokenSeconds / float64(len(chunks))
-		aggregated.TokensPerSecond = aggregated.TokensPerSecond / float64(len(chunks))
-	}
-
-	return finalText.String(), aggregated, nil
+	harness := newTranslationHarness(c, reqCtx, reqData, translationHarnessMode{})
+	return harness.run()
 }
 
 func (c *Client) TranslateTextStream(reqData TranslationRequest, sink eventSink) (string, TranslationStatsPayload, error) {
@@ -581,165 +467,162 @@ func (c *Client) TranslateTextStream(reqData TranslationRequest, sink eventSink)
 	defer cancel()
 	defer c.finishRequest(requestID)
 
-	c.emitClear()
+	harness := newTranslationHarness(c, reqCtx, reqData, translationHarnessMode{
+		emitLifecycle: true,
+		clearAtStart:  true,
+	})
+	text, stats, err := harness.run()
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	c.emitComplete(TranslationCompletePayload{Text: text})
+	return text, stats, nil
+}
 
+func newTranslationHarness(c *Client, reqCtx context.Context, reqData TranslationRequest, mode translationHarnessMode) *translationHarness {
 	reqData.SourceText = preprocessSourceText(reqData.SourceText)
+	plan := (chunkPlanner{}).plan(reqData)
 
-	chunkSize := reqData.Settings.SmartChunkSize
-	if chunkSize <= 0 {
-		chunkSize = 2000
+	return &translationHarness{
+		client:          c,
+		reqCtx:          reqCtx,
+		reqData:         reqData,
+		mode:            mode,
+		plan:            plan,
+		draftTranslator: draftTranslator{client: c, reqCtx: reqCtx},
+		postEditor:      postEditPass{client: c, reqCtx: reqCtx, emitLifecycle: mode.emitLifecycle},
+		contextMemory:   newContextMemory(reqData, plan.openingSourceParagraph),
+	}
+}
+
+func (h *translationHarness) run() (string, TranslationStatsPayload, error) {
+	if h.mode.emitLifecycle && h.mode.clearAtStart {
+		h.client.emitClear()
 	}
 
-	chunks := []smartChunk{{Text: strings.TrimSpace(reqData.SourceText)}}
-	if reqData.Settings.EnableSmartChunking {
-		chunks = buildSmartChunks(reqData.SourceText, chunkSize)
+	if len(h.plan.chunks) <= 1 {
+		return h.runSingleChunk()
 	}
-	_, _ = chunkCharacterStats(chunks)
-	if len(chunks) <= 1 {
-		c.emitProgressWithMetrics(
+	return h.runChunked()
+}
+
+func (h *translationHarness) runSingleChunk() (string, TranslationStatsPayload, error) {
+	options := translationRuntimeOptions{}
+	if h.mode.emitLifecycle {
+		h.client.emitProgressWithMetrics(
 			"chunking",
 			"Generating translation",
 			"Translating the full text",
-			overallPassProgress(1, 1, reqData.Settings.EnablePostEdit, "translate"),
+			overallPassProgress(1, 1, h.reqData.Settings.EnablePostEdit, "translate"),
 			false,
-			buildProgressMetrics(1, 1, reqData.Settings.EnablePostEdit, "translate"),
+			buildProgressMetrics(1, 1, h.reqData.Settings.EnablePostEdit, "translate"),
 		)
-		var (
-			text  string
-			stats TranslationStatsPayload
-			err   error
-		)
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			text, stats, err = c.translateWithLMStudio(reqCtx, reqData, translationRuntimeOptions{})
-		} else {
-			text, stats, err = c.translateWithCompatibleAPI(reqCtx, reqData, translationRuntimeOptions{})
-		}
-		if err != nil {
-			return "", TranslationStatsPayload{}, err
-		}
-		if reqData.Settings.EnablePostEdit {
-			c.emitProgressWithMetrics(
-				"post_edit",
-				"Post-editing translation",
-				"Checking for mixed-language or garbled fragments",
-				overallPassProgress(1, 1, reqData.Settings.EnablePostEdit, "post_edit"),
-				false,
-				buildProgressMetrics(1, 1, reqData.Settings.EnablePostEdit, "post_edit"),
-			)
-			postEdited, err := c.postEditTranslation(reqCtx, reqData, text, translationRuntimeOptions{})
-			if err != nil {
-				return "", TranslationStatsPayload{}, err
-			}
-			text = postEdited
-		}
-		text = cleanupTranslatedText(text)
-		if stats.InputTokens > 0 || stats.TotalOutputTokens > 0 {
-			c.emitStats(map[string]any{
-				"input_tokens":                stats.InputTokens,
-				"reasoning_output_tokens":     stats.ReasoningOutputTokens,
-				"time_to_first_token_seconds": stats.TimeToFirstTokenSeconds,
-				"tokens_per_second":           stats.TokensPerSecond,
-				"total_output_tokens":         stats.TotalOutputTokens,
-			})
-		}
-		c.emitProgress("done", "Done", "Translation complete", floatPtr(1), false)
-		c.emitComplete(TranslationCompletePayload{Text: text})
-		return text, stats, nil
 	}
 
-	aggregated := TranslationStatsPayload{}
-	var finalText strings.Builder
-	previousSummary := ""
-	openingSourceParagraph := leadingParagraph(reqData.SourceText, 420)
-	openingTranslatedParagraph := ""
-	for index, chunk := range chunks {
-		if err := reqCtx.Err(); err != nil {
+	text, stats, err := h.draftTranslator.translate(h.reqData, options)
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	text, err = h.postEditor.apply(h.reqData, text, options, 1, 1)
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	text = cleanupTranslatedText(text)
+
+	h.finalizeLifecycle(text, stats)
+	return text, stats, nil
+}
+
+func (h *translationHarness) runChunked() (string, TranslationStatsPayload, error) {
+	if h.mode.emitLifecycle && !h.mode.clearAtStart {
+		h.client.emitClear()
+	}
+
+	for index, chunk := range h.plan.chunks {
+		if err := h.reqCtx.Err(); err != nil {
 			return "", TranslationStatsPayload{}, fmt.Errorf("translation cancelled")
 		}
 
-		chunkReq := reqData
-		chunkReq.SourceText = chunk.Text
-
-		options := translationRuntimeOptions{
-			ContextSummary:             previousSummary,
-			ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", index+1, len(chunks)),
-			OverlapContext:             chunk.OverlapContext,
-			OpeningSourceParagraph:     openingSourceParagraph,
-			OpeningTranslatedParagraph: openingTranslatedParagraph,
-			OverallProgressBase:        derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate")),
-			ProgressMetrics:            buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-		}
-		c.emitProgressWithMetrics(
-			"chunking",
-			fmt.Sprintf("Translating %s", options.ChunkLabel),
-			fmt.Sprintf("Smart chunking active for long text (%d chars)", chunkSize),
-			overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-			false,
-			buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "translate"),
-		)
-
-		var translated string
-		var stats TranslationStatsPayload
-		var err error
-		if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
-			translated, stats, err = c.translateWithLMStudio(reqCtx, chunkReq, options)
-		} else {
-			translated, stats, err = c.translateWithCompatibleAPI(reqCtx, chunkReq, options)
-		}
+		translated, stats, err := h.runChunk(index, chunk)
 		if err != nil {
 			return "", TranslationStatsPayload{}, err
 		}
-		if reqData.Settings.EnablePostEdit {
-			c.emitProgressWithMetrics(
-				"post_edit",
-				fmt.Sprintf("Post-editing %s", options.ChunkLabel),
-				"Checking this translated section for mixed-language or garbled fragments",
-				overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"),
-				false,
-				buildProgressMetrics(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"),
-			)
-			postEditOptions := options
-			postEditOptions.OverallProgressBase = derefFloat(overallPassProgress(len(chunks), index+1, reqData.Settings.EnablePostEdit, "post_edit"))
-			postEdited, err := c.postEditTranslation(reqCtx, chunkReq, translated, postEditOptions)
-			if err != nil {
-				return "", TranslationStatsPayload{}, err
+
+		if index > 0 && h.finalText.Len() > 0 && !strings.HasSuffix(h.finalText.String(), "\n") && !strings.HasPrefix(translated, "\n") {
+			h.finalText.WriteString("\n\n")
+			if h.mode.emitLifecycle {
+				h.client.emitToken("\n\n")
 			}
-			translated = postEdited
 		}
-		translated = cleanupTranslatedText(translated)
-
-		if index > 0 && finalText.Len() > 0 && !strings.HasSuffix(finalText.String(), "\n") && !strings.HasPrefix(translated, "\n") {
-			finalText.WriteString("\n\n")
-			c.emitToken("\n\n")
-		}
-		finalText.WriteString(translated)
-		aggregated.InputTokens += stats.InputTokens
-		aggregated.ReasoningOutputTokens += stats.ReasoningOutputTokens
-		aggregated.TotalOutputTokens += stats.TotalOutputTokens
-		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
-		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
-		if openingTranslatedParagraph == "" {
-			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
-		}
+		h.finalText.WriteString(translated)
+		h.addStats(stats)
+		h.contextMemory.update(chunk.Text, translated, h.finalText.String())
 	}
 
-	if len(chunks) > 0 {
-		aggregated.TimeToFirstTokenSeconds = aggregated.TimeToFirstTokenSeconds / float64(len(chunks))
-		aggregated.TokensPerSecond = aggregated.TokensPerSecond / float64(len(chunks))
+	h.averageAggregatedStats()
+	final := h.finalText.String()
+	h.finalizeLifecycle(final, h.aggregated)
+	return final, h.aggregated, nil
+}
+
+func (h *translationHarness) runChunk(index int, chunk smartChunk) (string, TranslationStatsPayload, error) {
+	chunkReq := h.reqData
+	chunkReq.SourceText = chunk.Text
+
+	options := h.contextMemory.runtimeOptions(chunk, index+1, len(h.plan.chunks))
+
+	if h.mode.emitLifecycle {
+		h.client.emitProgressWithMetrics(
+			"chunking",
+			fmt.Sprintf("Translating %s", options.ChunkLabel),
+			fmt.Sprintf("Smart chunking active for long text (%d chars)", h.plan.chunkSize),
+			overallPassProgress(len(h.plan.chunks), index+1, h.reqData.Settings.EnablePostEdit, "translate"),
+			false,
+			options.ProgressMetrics,
+		)
 	}
 
-	c.emitStats(map[string]any{
-		"input_tokens":                aggregated.InputTokens,
-		"reasoning_output_tokens":     aggregated.ReasoningOutputTokens,
-		"time_to_first_token_seconds": aggregated.TimeToFirstTokenSeconds,
-		"tokens_per_second":           aggregated.TokensPerSecond,
-		"total_output_tokens":         aggregated.TotalOutputTokens,
-	})
-	c.emitProgress("done", "Done", "Translation complete", floatPtr(1), false)
-	final := finalText.String()
-	c.emitComplete(TranslationCompletePayload{Text: final})
-	return final, aggregated, nil
+	translated, stats, err := h.draftTranslator.translate(chunkReq, options)
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	translated, err = h.postEditor.apply(chunkReq, translated, options, index+1, len(h.plan.chunks))
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	return cleanupTranslatedText(translated), stats, nil
+}
+
+func (h *translationHarness) addStats(stats TranslationStatsPayload) {
+	h.aggregated.InputTokens += stats.InputTokens
+	h.aggregated.ReasoningOutputTokens += stats.ReasoningOutputTokens
+	h.aggregated.TotalOutputTokens += stats.TotalOutputTokens
+	h.aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
+	h.aggregated.TokensPerSecond += stats.TokensPerSecond
+}
+
+func (h *translationHarness) averageAggregatedStats() {
+	if len(h.plan.chunks) == 0 {
+		return
+	}
+	h.aggregated.TimeToFirstTokenSeconds = h.aggregated.TimeToFirstTokenSeconds / float64(len(h.plan.chunks))
+	h.aggregated.TokensPerSecond = h.aggregated.TokensPerSecond / float64(len(h.plan.chunks))
+}
+
+func (h *translationHarness) finalizeLifecycle(text string, stats TranslationStatsPayload) {
+	if !h.mode.emitLifecycle {
+		return
+	}
+	if stats.InputTokens > 0 || stats.TotalOutputTokens > 0 {
+		h.client.emitStats(map[string]any{
+			"input_tokens":                stats.InputTokens,
+			"reasoning_output_tokens":     stats.ReasoningOutputTokens,
+			"time_to_first_token_seconds": stats.TimeToFirstTokenSeconds,
+			"tokens_per_second":           stats.TokensPerSecond,
+			"total_output_tokens":         stats.TotalOutputTokens,
+		})
+	}
+	h.client.emitProgress("done", "Done", "Translation complete", floatPtr(1), false)
 }
 
 func (c *Client) translateWithCompatibleAPI(reqCtx context.Context, reqData TranslationRequest, runtimeOptions translationRuntimeOptions) (string, TranslationStatsPayload, error) {
