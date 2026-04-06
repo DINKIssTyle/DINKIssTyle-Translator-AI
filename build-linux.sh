@@ -10,8 +10,20 @@ BUILD_DIR="build/bin"
 
 echo "=== Starting Linux Build Process ==="
 
-# 1. Environment Detection and Dependency Installation
-echo "[1/4] Checking and installing dependencies..."
+# 1. Environment Cleanup and Tool Verification
+echo "[1/4] Cleaning up environment and checking tools..."
+rm -rf "$BUILD_DIR/$PRODUCT_NAME"
+rm -f "$BUILD_DIR/$INTERNAL_NAME"
+mkdir -p "$BUILD_DIR"
+
+if ! command -v wails &> /dev/null; then
+    echo "Wails CLI not found. Installing..."
+    go install github.com/wailsapp/wails/v2/cmd/wails@latest
+    export PATH=$PATH:$(go env GOPATH)/bin
+fi
+
+# 2. Dependency Installation (System-level)
+echo "[2/4] Checking and installing system dependencies..."
 if [ -x "$(command -v apt-get)" ]; then
     sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
 elif [ -x "$(command -v dnf)" ]; then
@@ -24,26 +36,29 @@ else
     echo "Warning: package manager not detected."
 fi
 
-# 2. WebKit2GTK Version Detection and Build Tags
-echo "[2/4] Detecting WebKit2GTK version..."
+# Detect WebKit2GTK version for build tags
 BUILD_TAGS=""
 if pkg-config --exists webkit2gtk-4.1; then
+    echo "Detected WebKit2GTK 4.1, enabling specialized tags..."
     BUILD_TAGS="-tags webkit2_41"
 fi
 
-# 3. Environment Configuration
-echo "[3/4] Configuring Go environment..."
-export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin
-
-if ! command -v wails &> /dev/null; then
-    go install github.com/wailsapp/wails/v2/cmd/wails@latest
-fi
+# 3. Frontend Build (Explicit build for absolute consistency)
+echo "[3/4] Building frontend assets (explicitly)..."
+pushd frontend
+npm install
+npm run build
+popd
 
 # 4. Build with Wails and Manual Rename
-echo "[4/4] Building and renaming to '$PRODUCT_NAME'..."
-wails build -platform linux/amd64 $BUILD_TAGS -v 2
+echo "[4/4] Building application with Wails and renaming to '$PRODUCT_NAME'..."
+wails build -platform linux/amd64 $BUILD_TAGS -ldflags "-s -w" -v 2
 
 # Rename binary to include spaces
-mv "$BUILD_DIR/$INTERNAL_NAME" "$BUILD_DIR/$PRODUCT_NAME"
+if [ -f "$BUILD_DIR/$INTERNAL_NAME" ]; then
+    mv "$BUILD_DIR/$INTERNAL_NAME" "$BUILD_DIR/$PRODUCT_NAME"
+else
+    echo "Warning: Binary '$INTERNAL_NAME' not found in $BUILD_DIR"
+fi
 
 echo "=== Build Complete: $BUILD_DIR/$PRODUCT_NAME ==="

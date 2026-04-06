@@ -13,28 +13,47 @@ ENTITLEMENTS="build/darwin/entitlements.plist"
 
 echo "=== Starting macOS Build Process ==="
 
-# 1. Environment Cleanup
-echo "[1/5] Cleaning up environment..."
-rm -rf "$BUILD_DIR/$PRODUCT_NAME.app"
+# 1. Environment Cleanup and Tool Verification
+echo "[1/5] Cleaning up environment and checking tools..."
+rm -rf "$APP_BUNDLE"
 rm -rf "$WAILS_BUNDLE"
 rm -f "$BUILD_DIR/$INTERNAL_NAME"
+mkdir -p "$BUILD_DIR"
 
-# 2. Build with Wails (using space-free name for stability)
-echo "[2/5] Building application with Wails..."
-wails build -platform darwin/universal -v 2
+if ! command -v wails &> /dev/null; then
+    echo "Wails CLI not found. Installing..."
+    go install github.com/wailsapp/wails/v2/cmd/wails@latest
+    export PATH=$PATH:$(go env GOPATH)/bin
+fi
 
-# 3. Rename Bundle and Binary for Production (Addressing spaces requirement)
-echo "[3/5] Customizing application name with spaces..."
-mv "$WAILS_BUNDLE" "$APP_BUNDLE"
-mv "$APP_BUNDLE/Contents/MacOS/$INTERNAL_NAME" "$APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
+# 2. Frontend Build (Explicit build for absolute consistency)
+echo "[2/5] Building frontend assets (explicitly)..."
+pushd frontend
+npm install
+npm run build
+popd
 
-# Update Info.plist
-# CFBundleExecutable and CFBundleName must match the new name
-plutil -replace CFBundleExecutable -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
-plutil -replace CFBundleName -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
+# 3. Build with Wails (using universal binary for modern Macs)
+echo "[3/5] Building application with Wails..."
+wails build -platform darwin/universal -ldflags "-s -w" -v 2
 
-# 4. Signing Identity Detection
-echo "[4/5] Detecting signing identity..."
+# 4. Rename Bundle and Binary for Production (Addressing spaces requirement)
+echo "[4/5] Customizing application name with spaces..."
+if [ -d "$WAILS_BUNDLE" ]; then
+    mv "$WAILS_BUNDLE" "$APP_BUNDLE"
+    mv "$APP_BUNDLE/Contents/MacOS/$INTERNAL_NAME" "$APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
+    
+    # Update Info.plist
+    # CFBundleExecutable and CFBundleName must match the new name
+    plutil -replace CFBundleExecutable -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
+    plutil -replace CFBundleName -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
+else
+    echo "Error: Application bundle not found at $WAILS_BUNDLE"
+    exit 1
+fi
+
+# 5. Code Signing Integrity (Re-signing)
+echo "[5/5] Detecting signing identity and performing code signing..."
 if [ -n "$MACOS_SIGN_IDENTITY" ]; then
     SIGN_ID="$MACOS_SIGN_IDENTITY"
     echo "Using SIGN_ID from environment: $SIGN_ID"
@@ -52,14 +71,9 @@ else
     fi
 fi
 
-# 5. Code Signing Integrity (Re-signing)
-echo "[5/5] Performing deep code signing with custom name..."
+# Deep code signing
 xattr -cr "$APP_BUNDLE"
-
-# Sign the main binary (specifically the one with spaces)
 codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
-
-# Final deep sign for the entire bundle
 codesign --force --options runtime --deep --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
 
 echo "=== Build Complete: $APP_BUNDLE ==="
