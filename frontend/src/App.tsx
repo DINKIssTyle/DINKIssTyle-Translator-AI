@@ -409,6 +409,10 @@ function clampTemperature(value: number): number {
     return Math.max(MIN_TEMPERATURE, Math.min(MAX_TEMPERATURE, Math.round(value * 10) / 10));
 }
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function formatTemperatureLabel(value: number): string {
     if (value <= 0) {
         return "Auto";
@@ -782,7 +786,7 @@ function DebugStudioWindow(props: {
 
 function App() {
     const storedSettings = loadStoredSettings();
-    const [windowMode, setWindowMode] = useState<"loading" | "main" | "debug-studio">("loading");
+    const [windowMode, setWindowMode] = useState<"loading" | "main" | "debug-studio">(isBrowserMode ? "main" : "loading");
     const isDebugStudioWindow = windowMode === "debug-studio";
     const [sourceText, setSourceText] = useState("");
     const [translation, setTranslation] = useState("");
@@ -824,6 +828,7 @@ function App() {
     const [webServerStatus, setWebServerStatus] = useState("");
     const [isSavingWebServerSettings, setIsSavingWebServerSettings] = useState(false);
     const [showSavedToast, setShowSavedToast] = useState(false);
+    const [savedToastMessage, setSavedToastMessage] = useState("Settings saved");
     const [editorFontSize, setEditorFontSize] = useState<number>(clampFontSize(storedSettings?.editorFontSize || DEFAULT_EDITOR_FONT_SIZE));
     const [showTemperatureSlider, setShowTemperatureSlider] = useState(false);
     const [showStatusSummary, setShowStatusSummary] = useState(false);
@@ -835,6 +840,11 @@ function App() {
     const [showSourceEditorModal, setShowSourceEditorModal] = useState(false);
     const [sourceEditorDraft, setSourceEditorDraft] = useState("");
     const [showTranslationViewerModal, setShowTranslationViewerModal] = useState(false);
+    const [showTranslationSearchModal, setShowTranslationSearchModal] = useState(false);
+    const [translationSearchDraft, setTranslationSearchDraft] = useState("");
+    const [translationSearchQuery, setTranslationSearchQuery] = useState("");
+    const [translationSearchMatchCount, setTranslationSearchMatchCount] = useState(0);
+    const [translationSearchActiveIndex, setTranslationSearchActiveIndex] = useState(-1);
     const [progressState, setProgressState] = useState<Required<ProgressPayload>>({
         stage: "",
         label: "",
@@ -849,6 +859,7 @@ function App() {
         visible: false,
         indeterminate: true,
     });
+    const [animatedProgressValue, setAnimatedProgressValue] = useState(0);
     const [debugTranslationPromptTemplate, setDebugTranslationPromptTemplate] = useState("");
     const [debugPostEditPromptTemplate, setDebugPostEditPromptTemplate] = useState("");
     const [lastTranslationPromptPreview, setLastTranslationPromptPreview] = useState("");
@@ -856,6 +867,8 @@ function App() {
     const [lastTopicAwareHintsPreview, setLastTopicAwareHintsPreview] = useState("");
 
     const outputRef = useRef<HTMLDivElement>(null);
+    const translationViewerRef = useRef<HTMLDivElement>(null);
+    const translationSearchMatchesRef = useRef<HTMLElement[]>([]);
     const promptInputRef = useRef<HTMLTextAreaElement>(null);
     const didHydrateSettingsRef = useRef(false);
     const progressHideTimerRef = useRef<number | null>(null);
@@ -885,13 +898,268 @@ function App() {
         ? (progressState.stage === "done" ? progressState.total_steps : Math.max(0, progressState.current_step - 1))
         : 0;
     const displayedProgressValue = usesStageRing ? progressState.progress : progressState.overall_progress;
-    const progressPercent = Math.max(0, Math.min(100, Math.round((displayedProgressValue || 0) * 100)));
-    const progressCircleStyle = {
-        background: `conic-gradient(${usesStageRing ? "var(--progress-stage)" : "var(--accent)"} ${progressPercent * 3.6}deg, rgba(127, 127, 127, 0.14) 0deg)`,
-    };
+    const clampedAnimatedProgressValue = Math.max(0, Math.min(1, animatedProgressValue || 0));
+    const progressPercent = Math.max(0, Math.min(100, Math.round(clampedAnimatedProgressValue * 100)));
+    const progressRingRadius = 28;
+    const progressRingCircumference = 2 * Math.PI * progressRingRadius;
+    const progressRingOffset = progressRingCircumference * (1 - clampedAnimatedProgressValue);
+    const progressRingColor = usesStageRing ? "var(--progress-stage)" : "var(--accent)";
     const progressRingCaption = usesStageRing
         ? (progressState.stage === "model_load" ? "Model" : "Prompt")
         : "Overall";
+
+    const showSavedToastMessage = (message: string) => {
+        setShowSavedToast(false);
+        window.setTimeout(() => {
+            setSavedToastMessage(message);
+            setShowSavedToast(true);
+        }, 0);
+    };
+
+    const announceAction = (message: string) => {
+        setStatusMessage(message);
+        showSavedToastMessage(message);
+    };
+
+    const getActiveTranslationContainer = () => {
+        if (showTranslationViewerModal && translationViewerRef.current) {
+            return translationViewerRef.current;
+        }
+        return outputRef.current;
+    };
+
+    const clearTranslationSearchHighlights = () => {
+        [outputRef.current, translationViewerRef.current].forEach(container => {
+            if (!container) {
+                return;
+            }
+            const highlights = Array.from(container.querySelectorAll("mark.translation-search-highlight"));
+            highlights.forEach(highlight => {
+                const textNode = document.createTextNode(highlight.textContent || "");
+                highlight.replaceWith(textNode);
+            });
+            container.normalize();
+        });
+        translationSearchMatchesRef.current = [];
+    };
+
+    const renderTranslationSearchHighlights = (
+        query: string,
+        requestedIndex: number,
+        options?: { scroll?: boolean }
+    ) => {
+        const container = getActiveTranslationContainer();
+        clearTranslationSearchHighlights();
+
+        if (!container) {
+            setTranslationSearchMatchCount(0);
+            setTranslationSearchActiveIndex(-1);
+            return { count: 0, activeIndex: -1 };
+        }
+
+        const normalizedQuery = query.trim();
+        if (!normalizedQuery) {
+            setTranslationSearchMatchCount(0);
+            setTranslationSearchActiveIndex(-1);
+            return { count: 0, activeIndex: -1 };
+        }
+
+        const matches: HTMLElement[] = [];
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        const textNodes: Text[] = [];
+        let currentNode = walker.nextNode();
+        while (currentNode) {
+            if (currentNode.nodeType === Node.TEXT_NODE) {
+                textNodes.push(currentNode as Text);
+            }
+            currentNode = walker.nextNode();
+        }
+
+        const pattern = new RegExp(escapeRegExp(normalizedQuery), "gi");
+        textNodes.forEach(node => {
+            const text = node.textContent || "";
+            if (!text.trim()) {
+                return;
+            }
+
+            pattern.lastIndex = 0;
+            const matched = Array.from(text.matchAll(pattern));
+            if (matched.length === 0) {
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+            let cursor = 0;
+            matched.forEach(match => {
+                const start = match.index ?? 0;
+                const value = match[0] || "";
+                if (start > cursor) {
+                    fragment.appendChild(document.createTextNode(text.slice(cursor, start)));
+                }
+
+                const mark = document.createElement("mark");
+                mark.className = "translation-search-highlight";
+                mark.textContent = value;
+                fragment.appendChild(mark);
+                matches.push(mark);
+                cursor = start + value.length;
+            });
+
+            if (cursor < text.length) {
+                fragment.appendChild(document.createTextNode(text.slice(cursor)));
+            }
+            node.parentNode?.replaceChild(fragment, node);
+        });
+
+        translationSearchMatchesRef.current = matches;
+        const count = matches.length;
+        const activeIndex = count > 0
+            ? Math.max(0, Math.min(requestedIndex, count - 1))
+            : -1;
+
+        matches.forEach((match, index) => {
+            match.classList.toggle("is-active", index === activeIndex);
+        });
+
+        if (count > 0 && options?.scroll !== false) {
+            matches[activeIndex].scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        }
+
+        setTranslationSearchMatchCount(count);
+        setTranslationSearchActiveIndex(activeIndex);
+        return { count, activeIndex };
+    };
+
+    const closeTranslationSearch = () => {
+        setShowTranslationSearchModal(false);
+        setTranslationSearchDraft("");
+        setTranslationSearchQuery("");
+        setTranslationSearchMatchCount(0);
+        setTranslationSearchActiveIndex(-1);
+        clearTranslationSearchHighlights();
+    };
+
+    const handleOpenTranslationSearchModal = () => {
+        setTranslationSearchDraft(translationSearchQuery);
+        setShowTranslationSearchModal(true);
+    };
+
+    const handleSubmitTranslationSearch = () => {
+        const query = translationSearchDraft.trim();
+        if (!query) {
+            closeTranslationSearch();
+            setStatusMessage("Enter a word to search in the translation.");
+            return;
+        }
+
+        setTranslationSearchQuery(query);
+        setShowTranslationSearchModal(false);
+        const result = renderTranslationSearchHighlights(query, 0);
+        if (result.count === 0) {
+            setStatusMessage(`No matches found for "${query}".`);
+            return;
+        }
+        setStatusMessage(`Found ${result.count} match${result.count > 1 ? "es" : ""} for "${query}".`);
+    };
+
+    const handleMoveTranslationSearch = (direction: "prev" | "next") => {
+        const query = translationSearchQuery.trim();
+        if (!query) {
+            return;
+        }
+
+        const count = translationSearchMatchesRef.current.length || translationSearchMatchCount;
+        if (count <= 0) {
+            const result = renderTranslationSearchHighlights(query, 0);
+            if (result.count === 0) {
+                setStatusMessage(`No matches found for "${query}".`);
+            }
+            return;
+        }
+
+        let nextIndex = translationSearchActiveIndex;
+        let wrapped = false;
+        if (direction === "next") {
+            nextIndex += 1;
+            if (nextIndex >= count) {
+                nextIndex = 0;
+                wrapped = true;
+            }
+        } else {
+            nextIndex -= 1;
+            if (nextIndex < 0) {
+                nextIndex = count - 1;
+            }
+        }
+
+        renderTranslationSearchHighlights(query, nextIndex);
+        if (wrapped) {
+            setStatusMessage(`Reached the first "${query}" result again.`);
+        }
+    };
+
+    const handlePasteIntoSourceEditorDraft = async () => {
+        try {
+            if (isBrowserMode && navigator.clipboard) {
+                const content = await navigator.clipboard.readText();
+                if (!content) {
+                    announceAction("Clipboard is empty.");
+                    return;
+                }
+                setSourceEditorDraft(content);
+                announceAction("Pasted clipboard text into the source editor.");
+                return;
+            }
+            const content = await ClipboardGetText();
+            if (!content) {
+                announceAction("Clipboard is empty.");
+                return;
+            }
+            setSourceEditorDraft(content);
+            announceAction("Pasted clipboard text into the source editor.");
+        } catch (err: any) {
+            console.error(err);
+            setStatusMessage(`Could not paste from clipboard: ${String(err)}`);
+        }
+    };
+
+    const handleOpenFileIntoSourceEditorDraft = async () => {
+        if (isBrowserMode) {
+            announceAction("Opening local files is only available in the desktop app.");
+            return;
+        }
+        try {
+            const content = await OpenFile();
+            if (content) {
+                setSourceEditorDraft(content);
+                announceAction("Loaded file content into the source editor.");
+            }
+        } catch (err: any) {
+            console.error(err);
+        }
+    };
+
+    const handleClearSourceEditorDraft = async () => {
+        if (!sourceEditorDraft) {
+            announceAction("There is no source text to clear.");
+            return;
+        }
+        try {
+            const shouldUseNativeDialog = !isBrowserMode && desktopPlatform === "darwin";
+            const shouldClear = shouldUseNativeDialog
+                ? await ConfirmClearSource()
+                : window.confirm("Clear the source text?");
+            if (!shouldClear) {
+                announceAction("Kept the source text.");
+                return;
+            }
+            setSourceEditorDraft("");
+            announceAction("Cleared the source editor.");
+        } catch (err: any) {
+            console.error(err);
+            setStatusMessage(`Could not clear the source text: ${String(err)}`);
+        }
+    };
 
     useEffect(() => {
         const textarea = promptInputRef.current;
@@ -908,6 +1176,39 @@ function App() {
         textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
         textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
     }, [instruction, editorFontSize]);
+
+    useEffect(() => {
+        const nextValue = Math.max(0, Math.min(1, displayedProgressValue || 0));
+        if (!progressState.visible || nextValue === 0) {
+            setAnimatedProgressValue(nextValue);
+            return;
+        }
+        if (nextValue <= animatedProgressValue) {
+            setAnimatedProgressValue(nextValue);
+            return;
+        }
+
+        let frameId = 0;
+        let startTime = 0;
+        const startValue = animatedProgressValue;
+        const duration = 220;
+
+        const tick = (timestamp: number) => {
+            if (!startTime) {
+                startTime = timestamp;
+            }
+            const elapsed = timestamp - startTime;
+            const ratio = Math.min(1, elapsed / duration);
+            const eased = 1 - Math.pow(1 - ratio, 3);
+            setAnimatedProgressValue(startValue + (nextValue - startValue) * eased);
+            if (ratio < 1) {
+                frameId = window.requestAnimationFrame(tick);
+            }
+        };
+
+        frameId = window.requestAnimationFrame(tick);
+        return () => window.cancelAnimationFrame(frameId);
+    }, [displayedProgressValue, progressState.visible]);
 
     useEffect(() => {
         if (isBrowserMode) {
@@ -1298,6 +1599,14 @@ function App() {
     }, [showEnhancedContextModal, providerSettings.enableEnhancedContextTranslation, providerSettings.enhancedContextGlossary]);
 
     useEffect(() => {
+        if (!showSavedToast) {
+            return;
+        }
+        const timer = window.setTimeout(() => setShowSavedToast(false), 1400);
+        return () => window.clearTimeout(timer);
+    }, [showSavedToast, savedToastMessage]);
+
+    useEffect(() => {
         if (isDebugStudioWindow) {
             return;
         }
@@ -1324,13 +1633,20 @@ function App() {
             return;
         }
 
-        setShowSavedToast(true);
-        const timer = window.setTimeout(() => {
-            setShowSavedToast(false);
-        }, 1400);
-
-        return () => window.clearTimeout(timer);
+        showSavedToastMessage("Settings saved");
     }, [providerSettings, editorFontSize, sourceLang, targetLang, showDebugPanel, selectedModel, isDebugStudioWindow]);
+
+    useEffect(() => {
+        if (!translationSearchQuery.trim()) {
+            clearTranslationSearchHighlights();
+            return;
+        }
+        renderTranslationSearchHighlights(
+            translationSearchQuery,
+            translationSearchActiveIndex < 0 ? 0 : translationSearchActiveIndex,
+            { scroll: false }
+        );
+    }, [cleanedTranslation, showTranslationViewerModal]);
 
     useEffect(() => {
         if (!isTranslating) {
@@ -1451,25 +1767,25 @@ function App() {
                                 setTranslation(prev => prev + (data?.token || ""));
                                 return;
                             }
-                        if (event === "progress") {
-                            const nextOverallProgress = deriveOverallProgress(data?.current_step, data?.total_steps, data?.stage === "done");
-                            setProgressState(prev => ({
-                                stage: data?.stage ?? prev.stage,
-                                label: data?.label ?? prev.label,
-                                detail: data?.detail ?? prev.detail,
-                                progress: typeof data?.progress === "number" ? data.progress : prev.progress,
-                                overall_progress: (data?.stage === "model_load" || data?.stage === "prompt_processing")
-                                    ? prev.overall_progress
-                                    : (nextOverallProgress ?? prev.overall_progress),
-                                current_chunk: typeof data?.current_chunk === "number" ? data.current_chunk : prev.current_chunk,
-                                completed_chunks: typeof data?.completed_chunks === "number" ? data.completed_chunks : prev.completed_chunks,
-                                total_chunks: typeof data?.total_chunks === "number" ? data.total_chunks : prev.total_chunks,
-                                current_step: typeof data?.current_step === "number" ? data.current_step : prev.current_step,
-                                total_steps: typeof data?.total_steps === "number" ? data.total_steps : prev.total_steps,
-                                visible: data?.visible ?? true,
-                                indeterminate: data?.indeterminate ?? prev.indeterminate,
-                            }));
-                            return;
+                            if (event === "progress") {
+                                const nextOverallProgress = deriveOverallProgress(data?.current_step, data?.total_steps, data?.stage === "done");
+                                setProgressState(prev => ({
+                                    stage: data?.stage ?? prev.stage,
+                                    label: data?.label ?? prev.label,
+                                    detail: data?.detail ?? prev.detail,
+                                    progress: typeof data?.progress === "number" ? data.progress : prev.progress,
+                                    overall_progress: (data?.stage === "model_load" || data?.stage === "prompt_processing")
+                                        ? prev.overall_progress
+                                        : (nextOverallProgress ?? prev.overall_progress),
+                                    current_chunk: typeof data?.current_chunk === "number" ? data.current_chunk : prev.current_chunk,
+                                    completed_chunks: typeof data?.completed_chunks === "number" ? data.completed_chunks : prev.completed_chunks,
+                                    total_chunks: typeof data?.total_chunks === "number" ? data.total_chunks : prev.total_chunks,
+                                    current_step: typeof data?.current_step === "number" ? data.current_step : prev.current_step,
+                                    total_steps: typeof data?.total_steps === "number" ? data.total_steps : prev.total_steps,
+                                    visible: data?.visible ?? true,
+                                    indeterminate: data?.indeterminate ?? prev.indeterminate,
+                                }));
+                                return;
                             }
                             if (event === "stats") {
                                 latestStatsRef.current = data || null;
@@ -1691,14 +2007,14 @@ function App() {
 
     const handleOpenFile = async () => {
         if (isBrowserMode) {
-            setStatusMessage("Opening local files is only available in the desktop app.");
+            announceAction("Opening local files is only available in the desktop app.");
             return;
         }
         try {
             const content = await OpenFile();
             if (content) {
                 setSourceText(content);
-                setStatusMessage("Loaded file content into the source editor.");
+                announceAction("Loaded file content into the source editor.");
             }
         } catch (err: any) {
             console.error(err);
@@ -1710,20 +2026,20 @@ function App() {
             if (isBrowserMode && navigator.clipboard) {
                 const content = await navigator.clipboard.readText();
                 if (!content) {
-                    setStatusMessage("Clipboard is empty.");
+                    announceAction("Clipboard is empty.");
                     return;
                 }
                 setSourceText(content);
-                setStatusMessage("Pasted clipboard text into the source editor.");
+                announceAction("Pasted clipboard text into the source editor.");
                 return;
             }
             const content = await ClipboardGetText();
             if (!content) {
-                setStatusMessage("Clipboard is empty.");
+                announceAction("Clipboard is empty.");
                 return;
             }
             setSourceText(content);
-            setStatusMessage("Pasted clipboard text into the source editor.");
+            announceAction("Pasted clipboard text into the source editor.");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not paste from clipboard: ${String(err)}`);
@@ -1732,7 +2048,7 @@ function App() {
 
     const handleClearSource = async () => {
         if (!sourceText) {
-            setStatusMessage("There is no source text to clear.");
+            announceAction("There is no source text to clear.");
             return;
         }
         try {
@@ -1741,11 +2057,11 @@ function App() {
                 ? await ConfirmClearSource()
                 : window.confirm("Clear the source text?");
             if (!shouldClear) {
-                setStatusMessage("Kept the source text.");
+                announceAction("Kept the source text.");
                 return;
             }
             setSourceText("");
-            setStatusMessage("Cleared the source editor.");
+            announceAction("Cleared the source editor.");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not clear the source text: ${String(err)}`);
@@ -1760,11 +2076,16 @@ function App() {
     const handleCloseSourceEditorModal = () => {
         setSourceText(sourceEditorDraft);
         setShowSourceEditorModal(false);
-        setStatusMessage("Updated the source editor.");
+        announceAction("Updated the source editor.");
     };
 
     const handleOpenTranslationViewerModal = () => {
         setShowTranslationViewerModal(true);
+    };
+
+    const handleCloseTranslationViewerModal = () => {
+        setShowTranslationViewerModal(false);
+        closeTranslationSearch();
     };
 
     const handleSaveFile = async () => {
@@ -1777,7 +2098,7 @@ function App() {
                 link.download = "dkst-translation.txt";
                 link.click();
                 window.URL.revokeObjectURL(url);
-                setStatusMessage("Downloaded translation file.");
+                announceAction("Downloaded translation file.");
             } catch (err: any) {
                 console.error(err);
                 setStatusMessage(`Could not download translation: ${String(err)}`);
@@ -1787,7 +2108,7 @@ function App() {
         try {
             const savedPath = await SaveFile(cleanedTranslation);
             if (savedPath) {
-                setStatusMessage(`Saved translation to: ${savedPath}`);
+                announceAction(`Saved translation to: ${savedPath}`);
             }
         } catch (err: any) {
             console.error(err);
@@ -1797,19 +2118,19 @@ function App() {
     const handleCopyTranslation = async () => {
         try {
             if (!cleanedTranslation) {
-                setStatusMessage("There is no translated text to copy.");
+                announceAction("There is no translated text to copy.");
                 return;
             }
             if (isBrowserMode && navigator.clipboard) {
                 await navigator.clipboard.writeText(cleanedTranslation);
-                setStatusMessage("Copied translation to clipboard.");
+                announceAction("Copied translation to clipboard.");
                 return;
             }
             const ok = await ClipboardSetText(cleanedTranslation);
             if (ok) {
-                setStatusMessage("Copied translation to clipboard.");
+                announceAction("Copied translation to clipboard.");
             } else {
-                setStatusMessage("Could not copy translation to clipboard.");
+                announceAction("Could not copy translation to clipboard.");
             }
         } catch (err: any) {
             console.error(err);
@@ -1850,6 +2171,7 @@ function App() {
             setWebServerStatus(saved.enabled
                 ? `Web server ready at ${saved.url || `${saved.useTls ? "https" : "http"}://localhost:${saved.port}`}`
                 : "Web server disabled.");
+            showSavedToastMessage("Saved");
         } catch (err: any) {
             console.error(err);
             setWebServerStatus(`Could not save web server settings: ${String(err)}`);
@@ -1904,6 +2226,7 @@ function App() {
             enhancedContextGlossary: enhancedContextDraftGlossary,
         }));
         setShowEnhancedContextModal(false);
+        showSavedToastMessage("Saved");
     };
 
     const handleOpenEnhancedContextGlossary = async () => {
@@ -1963,7 +2286,7 @@ function App() {
             ? `${selectedModel} ready`
             : "No model selected";
 
-    if (windowMode === "loading") {
+    if (windowMode === "loading" && !isBrowserMode) {
         return <div className="debug-window-shell">Loading window...</div>;
     }
 
@@ -2290,13 +2613,13 @@ function App() {
                             Source
                             <div className="pane-actions">
                                 <button onClick={handleClearSource} title="Clear Source" disabled={!sourceText}>
-                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>backspace</span>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete_sweep</span>
                                 </button>
                                 <button onClick={handlePasteSource} title="Paste Source">
-                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>assignment_return</span>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>content_paste_go</span>
                                 </button>
                                 <button onClick={handleOpenSourceEditorModal} title="Open Source Editor">
-                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>edit_document</span>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>edit_note</span>
                                 </button>
                                 <button onClick={handleOpenFile} title="Open File">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
@@ -2319,7 +2642,10 @@ function App() {
                             Translation
                             <div className="pane-actions">
                                 <button onClick={handleCopyTranslation} title="Copy Translation">
-                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>content_copy</span>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>copy_all</span>
+                                </button>
+                                <button onClick={handleOpenTranslationSearchModal} title="Search Translation">
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>search</span>
                                 </button>
                                 <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>pageview</span>
@@ -2334,10 +2660,66 @@ function App() {
                                 {renderMarkdown(translation)}
                                 {isTranslating && <span className="cursor">|</span>}
                             </div>
+                            {translationSearchQuery && translationSearchMatchCount > 0 && (
+                                <div className="translation-search-nav" role="status" aria-live="polite">
+                                    <button type="button" onClick={() => handleMoveTranslationSearch("prev")} title="Previous match">
+                                        <span className="material-symbols-outlined">arrow_upward</span>
+                                    </button>
+                                    <div className="translation-search-nav-count">
+                                        {translationSearchActiveIndex + 1}/{translationSearchMatchCount}
+                                    </div>
+                                    <button type="button" onClick={() => handleMoveTranslationSearch("next")} title="Next match">
+                                        <span className="material-symbols-outlined">arrow_downward</span>
+                                    </button>
+                                    <button type="button" onClick={closeTranslationSearch} title="Close search">
+                                        <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                            )}
                             <div className="pane-stats">{translationStats}</div>
                         </div>
                     </div>
                 </main>
+
+                {showTranslationSearchModal && (
+                    <div className="modal-overlay modal-overlay-centered modal-overlay-top" onClick={() => setShowTranslationSearchModal(false)}>
+                        <div className="modal-card translation-search-modal" onClick={e => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <div>
+                                    <div className="modal-title">Search Translation</div>
+                                    <div className="modal-subtitle">Find a word or phrase in the translated result.</div>
+                                </div>
+                                <button className="icon-btn" onClick={() => setShowTranslationSearchModal(false)} title="Close">
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+                            <div className="modal-body translation-search-modal-body">
+                                <input
+                                    type="text"
+                                    className="translation-search-input"
+                                    value={translationSearchDraft}
+                                    onChange={e => setTranslationSearchDraft(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            handleSubmitTranslationSearch();
+                                        }
+                                    }}
+                                    placeholder="Enter search text"
+                                    autoFocus
+                                />
+                                <div className="translation-search-actions">
+                                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setShowTranslationSearchModal(false)}>
+                                        Cancel
+                                    </button>
+                                    <button className="btn btn-primary btn-small" type="button" onClick={handleSubmitTranslationSearch}>
+                                        Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {promptSelectionModal && (
                     <div className="modal-overlay" onClick={() => setPromptSelectionModal(null)}>
@@ -2445,9 +2827,26 @@ function App() {
                         <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <div className="modal-title">Edit Source Text</div>
-                                <button className="btn btn-secondary btn-small" onClick={handleCloseSourceEditorModal} title="Save changes and close">
-                                    OK
-                                </button>
+                                <div className="modal-header-actions">
+                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
+                                        <span className="material-symbols-outlined">remove</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev + 1))} title="Increase Font Size">
+                                        <span className="material-symbols-outlined">add</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleClearSourceEditorDraft} title="Clear Source">
+                                        <span className="material-symbols-outlined">delete_sweep</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handlePasteIntoSourceEditorDraft} title="Paste Source">
+                                        <span className="material-symbols-outlined">content_paste_go</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleOpenFileIntoSourceEditorDraft} title="Open File">
+                                        <span className="material-symbols-outlined">folder_open</span>
+                                    </button>
+                                    <button className="btn btn-secondary btn-small modal-ok-btn" onClick={handleCloseSourceEditorModal} title="Save changes and close">
+                                        OK
+                                    </button>
+                                </div>
                             </div>
                             <div className="modal-body modal-body-fullscreen">
                                 <textarea
@@ -2463,18 +2862,55 @@ function App() {
                 )}
 
                 {showTranslationViewerModal && (
-                    <div className="modal-overlay modal-overlay-centered modal-overlay-fullscreen" onClick={() => setShowTranslationViewerModal(false)}>
+                    <div className="modal-overlay modal-overlay-centered modal-overlay-fullscreen" onClick={handleCloseTranslationViewerModal}>
                         <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <div className="modal-title">Translation Preview</div>
-                                <button className="icon-btn" onClick={() => setShowTranslationViewerModal(false)} title="Close">
-                                    <span className="material-symbols-outlined">close</span>
-                                </button>
+                                <div className="modal-header-actions">
+                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
+                                        <span className="material-symbols-outlined">remove</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev + 1))} title="Increase Font Size">
+                                        <span className="material-symbols-outlined">add</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleCopyTranslation} title="Copy Translation">
+                                        <span className="material-symbols-outlined">copy_all</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleOpenTranslationSearchModal} title="Search Translation">
+                                        <span className="material-symbols-outlined">search</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleSaveFile} title="Save to File">
+                                        <span className="material-symbols-outlined">save</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={handleCloseTranslationViewerModal} title="Close">
+                                        <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
                             </div>
-                            <div className="modal-body modal-body-fullscreen">
-                                <div className="translation-output markdown-output fullscreen-viewer" style={{ fontSize: `${editorFontSize}px` }}>
+                            <div className="modal-body modal-body-fullscreen translation-viewer-body">
+                                <div
+                                    ref={translationViewerRef}
+                                    className="translation-output markdown-output fullscreen-viewer"
+                                    style={{ fontSize: `${editorFontSize}px` }}
+                                >
                                     {renderMarkdown(cleanedTranslation)}
                                 </div>
+                                {translationSearchQuery && translationSearchMatchCount > 0 && (
+                                    <div className="translation-search-nav" role="status" aria-live="polite">
+                                        <button type="button" onClick={() => handleMoveTranslationSearch("prev")} title="Previous match">
+                                            <span className="material-symbols-outlined">arrow_upward</span>
+                                        </button>
+                                        <div className="translation-search-nav-count">
+                                            {translationSearchActiveIndex + 1}/{translationSearchMatchCount}
+                                        </div>
+                                        <button type="button" onClick={() => handleMoveTranslationSearch("next")} title="Next match">
+                                            <span className="material-symbols-outlined">arrow_downward</span>
+                                        </button>
+                                        <button type="button" onClick={closeTranslationSearch} title="Close search">
+                                            <span className="material-symbols-outlined">close</span>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -2492,7 +2928,10 @@ function App() {
                                             : "Configure translation and web access side by side."}
                                     </div>
                                 </div>
-                                <button className="btn btn-secondary btn-small" onClick={() => setShowModelModal(false)} title="OK">
+                                <button className="btn btn-secondary btn-small" onClick={() => {
+                                    setShowModelModal(false);
+                                    showSavedToastMessage("Saved");
+                                }} title="OK">
                                     OK
                                 </button>
                             </div>
@@ -2886,10 +3325,24 @@ function App() {
                         </div>
                     </div>
                 )}
-                {showSavedToast && <div className="settings-toast">Settings saved</div>}
+                {showSavedToast && <div className="settings-toast">{savedToastMessage}</div>}
                 <div className={`progress-widget ${progressState.visible ? "show" : ""}`}>
                     <div className="progress-layout">
-                        <div className="progress-ring" style={progressCircleStyle}>
+                        <div className="progress-ring">
+                            <svg className="progress-ring-svg" viewBox="0 0 72 72" aria-hidden="true">
+                                <circle className="progress-ring-track" cx="36" cy="36" r={progressRingRadius} />
+                                <circle
+                                    className="progress-ring-progress"
+                                    cx="36"
+                                    cy="36"
+                                    r={progressRingRadius}
+                                    style={{
+                                        stroke: progressRingColor,
+                                        strokeDasharray: progressRingCircumference,
+                                        strokeDashoffset: progressRingOffset,
+                                    }}
+                                />
+                            </svg>
                             <div className="progress-ring-inner">
                                 <div className="progress-ring-value">{progressPercent}%</div>
                                 {progressRingCaption && <div className="progress-ring-caption">{progressRingCaption}</div>}

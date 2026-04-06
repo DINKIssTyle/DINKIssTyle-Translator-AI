@@ -444,7 +444,7 @@ func (c *Client) Translate(reqData TranslationRequest) error {
 		aggregated.TotalOutputTokens += stats.TotalOutputTokens
 		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
 		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(chunk.Text, translated)
+		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
 		if openingTranslatedParagraph == "" {
 			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
 		}
@@ -562,7 +562,7 @@ func (c *Client) TranslateText(reqData TranslationRequest) (string, TranslationS
 		aggregated.TotalOutputTokens += stats.TotalOutputTokens
 		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
 		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(chunk.Text, translated)
+		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
 		if openingTranslatedParagraph == "" {
 			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
 		}
@@ -718,7 +718,7 @@ func (c *Client) TranslateTextStream(reqData TranslationRequest, sink eventSink)
 		aggregated.TotalOutputTokens += stats.TotalOutputTokens
 		aggregated.TimeToFirstTokenSeconds += stats.TimeToFirstTokenSeconds
 		aggregated.TokensPerSecond += stats.TokensPerSecond
-		previousSummary = buildContextSummary(chunk.Text, translated)
+		previousSummary = buildContextSummary(reqData.Settings, reqData.Instruction, chunk.Text, translated)
 		if openingTranslatedParagraph == "" {
 			openingTranslatedParagraph = leadingParagraph(finalText.String(), 420)
 		}
@@ -1147,6 +1147,9 @@ func applyAuth(req *http.Request, settings ProviderSettings) {
 	}
 }
 
+// buildPrompt는 1차 번역용 프롬프트를 조립한다.
+// 사용자의 지침, 보호 용어, 청크 문맥, 오프닝 앵커 등을 합쳐
+// "현재 청크를 어떻게 번역해야 하는가"를 모델에게 전달하는 메인 번역 프롬프트이다.
 func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, instruction string, runtimeOptions translationRuntimeOptions) string {
 	sourceLabel := normalizeLanguageLabel(sourceLang)
 	targetLabel := normalizeLanguageLabel(targetLang)
@@ -1178,7 +1181,12 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		targetLabel,
 	))
 
-	builder.WriteString("\n# 2. User Style And Instructions\n")
+	builder.WriteString("\n# 2. Instruction Priority Rules\n")
+	builder.WriteString("- The user style instruction is mandatory for every chunk, including later chunks.\n")
+	builder.WriteString("- If previous chunk wording, overlap context, or opening style anchor conflicts with the user instruction, follow the user instruction.\n")
+	builder.WriteString("- Use continuity context only to preserve meaning, terminology, names, and narrative flow. Do not let it override the requested style.\n")
+
+	builder.WriteString("\n# 3. User Style And Instructions\n")
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
 		builder.WriteString(trimmedInstruction)
 		if !strings.HasSuffix(trimmedInstruction, ".") &&
@@ -1192,7 +1200,7 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if len(protectedTerms) > 0 {
-		builder.WriteString("\n# 2-0. Protected Names And Terms\n")
+		builder.WriteString("\n# 3-0. Protected Names And Terms\n")
 		builder.WriteString("Do not translate these proper nouns or technical names into literal Hanja/Chinese-character compounds. Preserve them in their established target-language form or keep the original script when appropriate:\n")
 		for _, term := range protectedTerms {
 			builder.WriteString("- ")
@@ -1202,7 +1210,7 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if settings.EnableEnhancedContextTranslation {
-		builder.WriteString("\n# 2-1. Enhanced Context Translation Rules\n")
+		builder.WriteString("\n# 3-1. Enhanced Context Translation Rules\n")
 		builder.WriteString("Maintain consistent translations for names, places, organizations, products, commands, and technical terms across the entire text. Reuse the same established translation whenever the same source term appears again. If a term should remain in the original language, keep it unchanged consistently.\n")
 
 		if glossary := strings.TrimSpace(settings.EnhancedContextGlossary); glossary != "" {
@@ -1214,19 +1222,19 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
-		builder.WriteString("\n# 2-2. Current Section\n")
+		builder.WriteString("\n# 3-2. Current Section\n")
 		builder.WriteString(fmt.Sprintf("%s.\n", chunkLabel))
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
-		builder.WriteString("\n# 2-3. Previous Context\n")
+		builder.WriteString("\n# 3-3. Previous Context\n")
 		builder.WriteString("Context from the previous translated section:\n")
 		builder.WriteString(contextSummary)
-		builder.WriteString("\nUse this only to preserve continuity and terminology. Do not repeat already translated content.\n")
+		builder.WriteString("\nUse this only to preserve continuity and terminology. If it conflicts with the user instruction, ignore the conflicting part.\n")
 	}
 
 	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
-		builder.WriteString("\n# 2-4. Opening Style Anchor\n")
+		builder.WriteString("\n# 3-4. Opening Style Anchor\n")
 		builder.WriteString("Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.\n")
 		builder.WriteString("Opening source paragraph:\n")
 		builder.WriteString(openingSource)
@@ -1239,13 +1247,13 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
-		builder.WriteString("\n# 2-5. Recent Source Overlap\n")
+		builder.WriteString("\n# 3-5. Recent Source Overlap\n")
 		builder.WriteString("Recent source overlap for continuity:\n")
 		builder.WriteString(overlapContext)
 		builder.WriteString("\nUse this only as reference context. Do not translate or repeat this overlap again.\n")
 	}
 
-	builder.WriteString("\n# 3. Output Constraints And Source Text\n")
+	builder.WriteString("\n# 4. Output Constraints And Source Text\n")
 	builder.WriteString(fmt.Sprintf(
 		"Produce only the %s translation, without any additional explanations or commentary. Please translate the following %s text into %s:\n\n",
 		targetLabel,
@@ -1257,6 +1265,9 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	return builder.String()
 }
 
+// buildPostEditPrompt는 초벌 번역(draftTranslation)을 다듬는 포스트 에디팅용 프롬프트를 조립한다.
+// 원문과 초벌 번역을 함께 넣고, 사용자 지침 및 문맥을 기준으로
+// 의미 보존을 유지하면서 표현을 교정하도록 모델에 지시하는 최종 교정 프롬프트이다.
 func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, draftTranslation, instruction string, runtimeOptions translationRuntimeOptions) string {
 	sourceLabel := normalizeLanguageLabel(sourceLang)
 	targetLabel := normalizeLanguageLabel(targetLang)
@@ -1288,6 +1299,11 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		targetLabel,
 		targetLabel,
 	))
+
+	builder.WriteString("\nInstruction priority rules:\n")
+	builder.WriteString("- The user style instruction is mandatory for this chunk.\n")
+	builder.WriteString("- If the draft conflicts with the user instruction, revise the draft to match the instruction.\n")
+	builder.WriteString("- If previous context, overlap context, or opening style anchor conflicts with the user instruction, follow the user instruction.\n")
 
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
 		builder.WriteString("\nStyle instruction:\n")
@@ -1341,6 +1357,7 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	builder.WriteString("- Do not replace a specific institution, qualification, admission, or legal action with a different meaning.\n")
 	builder.WriteString("- Fix only clear errors: malformed transliterations, mixed-language fragments, stray foreign-script insertions, leftover untranslated words, or obvious mistranslations.\n")
 	builder.WriteString("- Preserve intentional bilingual notation only when it is clearly marked with parentheses, quotes, aliases, or original-title notation.\n")
+	builder.WriteString("- User instruction compliance has priority over preserving the existing draft wording.\n")
 	builder.WriteString("- Compare the source against the low-temperature draft and revise only where a correction or clear naturalness improvement is justified.\n")
 	builder.WriteString("- If a sentence is already acceptable, keep it as close to the draft as possible.\n")
 	builder.WriteString("- Output only the final corrected translation.\n")
@@ -1372,6 +1389,8 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	return builder.String()
 }
 
+// buildTopicAwarePostEditHints는 포스트 에디팅 단계에서 참고할 약한 장르/주제/톤 힌트를 만든다.
+// 강제 규칙이 아니라, register와 terminology consistency를 조금 더 안정시키기 위한 보조 프롬프트 조각이다.
 func buildTopicAwarePostEditHints(sourceText, draftTranslation, instruction string) string {
 	genre := detectPostEditGenre(sourceText, draftTranslation, instruction)
 	topic := detectPostEditTopic(sourceText, draftTranslation)
@@ -1396,6 +1415,9 @@ func buildTopicAwarePostEditHints(sourceText, draftTranslation, instruction stri
 	return builder.String()
 }
 
+// topicAwarePostEditTemplateValue는 디버그/템플릿 기반 포스트 에디트 프롬프트에
+// 주제 인식 힌트를 문자열로 주입하기 위한 값 생성 함수이다.
+// 기능이 꺼져 있으면 빈 문자열을 반환해 해당 섹션이 빠지도록 만든다.
 func topicAwarePostEditTemplateValue(settings ProviderSettings, sourceText, draftTranslation, instruction string) string {
 	if !settings.EnableTopicAwarePostEdit {
 		return ""
@@ -1483,6 +1505,8 @@ func firstNonEmptyLine(text string) string {
 	return ""
 }
 
+// applyPromptTemplate는 디버그용 프롬프트 템플릿의 {{PLACEHOLDER}} 값을 실제 문자열로 치환한다.
+// 사용자가 프롬프트 실험을 할 때 렌더링된 최종 프롬프트를 만드는 용도이다.
 func applyPromptTemplate(template string, values map[string]string) string {
 	result := template
 	for key, value := range values {
@@ -1491,6 +1515,8 @@ func applyPromptTemplate(template string, values map[string]string) string {
 	return strings.TrimSpace(result)
 }
 
+// normalizeDebugPromptTemplateInput은 디버그 템플릿 입력에 들어온 이스케이프 문자열을
+// 실제 줄바꿈/탭으로 되돌려, 템플릿 편집창에서 저장한 내용을 정상적인 프롬프트로 만들기 위한 전처리이다.
 func normalizeDebugPromptTemplateInput(template string) string {
 	replacer := strings.NewReplacer(
 		`\r\n`, "\n",
@@ -1507,6 +1533,9 @@ func effectiveGlossary(settings ProviderSettings) string {
 	return strings.TrimSpace(settings.EnhancedContextGlossary)
 }
 
+// sanitizeDebugPromptOverride는 디버그 프롬프트 오버라이드에 대해
+// 현재 옵션에서 비활성화된 섹션(예: glossary, topic-aware hint)을 제거해
+// 실제 설정 상태와 맞는 최종 프롬프트만 남기도록 정리한다.
 func sanitizeDebugPromptOverride(prompt string, enhancedEnabled bool, topicAwareEnabled bool, isTranslationPrompt bool) string {
 	result := prompt
 	if !enhancedEnabled {
@@ -1946,10 +1975,13 @@ func leadingRunes(text string, maxChars int) string {
 	return string(runes[:maxChars])
 }
 
-func buildContextSummary(sourceChunk, translatedChunk string) string {
+func buildContextSummary(settings ProviderSettings, instruction, sourceChunk, translatedChunk string) string {
 	sourceTail := trailingSentences(sourceChunk, 240)
 	translatedTail := trailingSentences(translatedChunk, 240)
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 5)
+	if styleMemory := buildStyleMemorySummary(settings, instruction, translatedChunk); styleMemory != "" {
+		parts = append(parts, styleMemory)
+	}
 	if sourceTail != "" {
 		parts = append(parts, "Source tail: "+sourceTail)
 	}
@@ -1957,6 +1989,54 @@ func buildContextSummary(sourceChunk, translatedChunk string) string {
 		parts = append(parts, "Translated tail: "+translatedTail)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func buildStyleMemorySummary(settings ProviderSettings, instruction, translatedChunk string) string {
+	lines := make([]string, 0, 6)
+	lines = append(lines, "Carry-forward style memory:")
+	lines = append(lines, "- User instruction remains mandatory for all remaining chunks.")
+	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
+		lines = append(lines, "- Active user style: "+singleLinePreview(trimmedInstruction, 220))
+	}
+	if tone := detectPostEditTone(translatedChunk, instruction); tone != "" {
+		lines = append(lines, "- Established tone/register so far: "+tone)
+	}
+	if lockedTerms := glossaryMemoryLines(settings.EnhancedContextGlossary, 4); len(lockedTerms) > 0 {
+		lines = append(lines, "- Locked terminology from glossary:")
+		for _, term := range lockedTerms {
+			lines = append(lines, "  "+term)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func glossaryMemoryLines(glossary string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	lines := make([]string, 0, limit)
+	for _, raw := range strings.Split(strings.ReplaceAll(glossary, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, "- "+singleLinePreview(trimmed, 120))
+		if len(lines) >= limit {
+			break
+		}
+	}
+	return lines
+}
+
+func singleLinePreview(text string, maxChars int) string {
+	normalized := strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	if normalized == "" {
+		return ""
+	}
+	if maxChars <= 0 {
+		return normalized
+	}
+	return leadingRunes(normalized, maxChars)
 }
 
 func normalizeLanguageLabel(language string) string {
