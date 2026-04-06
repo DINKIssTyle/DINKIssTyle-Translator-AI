@@ -1172,7 +1172,7 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		})
 		return sanitizeDebugPromptOverride(prompt, settings.EnableEnhancedContextTranslation, false, true)
 	}
-	builder.WriteString("# 1. Role And Core Persona\n")
+	builder.WriteString("[Role And Core Persona]\n")
 	builder.WriteString(fmt.Sprintf(
 		"You are a professional %s to %s translator. Your goal is to accurately convey the meaning and nuances of the original %s text while adhering to %s grammar, vocabulary, and cultural sensitivities.\n",
 		sourceLabel,
@@ -1181,12 +1181,12 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		targetLabel,
 	))
 
-	builder.WriteString("\n# 2. Instruction Priority Rules\n")
+	builder.WriteString("\n---\n[Instruction Priority Rules]\n")
 	builder.WriteString("- The user style instruction is mandatory for every chunk, including later chunks.\n")
 	builder.WriteString("- If previous chunk wording, overlap context, or opening style anchor conflicts with the user instruction, follow the user instruction.\n")
 	builder.WriteString("- Use continuity context only to preserve meaning, terminology, names, and narrative flow. Do not let it override the requested style.\n")
 
-	builder.WriteString("\n# 3. User Style And Instructions\n")
+	builder.WriteString("\n---\n[User Style And Instructions]\n")
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
 		builder.WriteString(trimmedInstruction)
 		if !strings.HasSuffix(trimmedInstruction, ".") &&
@@ -1200,8 +1200,11 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if len(protectedTerms) > 0 {
-		builder.WriteString("\n# 3-0. Protected Names And Terms\n")
-		builder.WriteString("Do not translate these proper nouns or technical names into literal Hanja/Chinese-character compounds. Preserve them in their established target-language form or keep the original script when appropriate:\n")
+		builder.WriteString("\n---\n[Protected Names And Terms]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Treat these as protected names or technical terms. Follow the user instruction and user glossary first for how they should be rendered. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
+			targetLabel,
+		))
 		for _, term := range protectedTerms {
 			builder.WriteString("- ")
 			builder.WriteString(term)
@@ -1210,8 +1213,12 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if settings.EnableEnhancedContextTranslation {
-		builder.WriteString("\n# 3-1. Enhanced Context Translation Rules\n")
-		builder.WriteString("Maintain consistent translations for names, places, organizations, products, commands, and technical terms across the entire text. Reuse the same established translation whenever the same source term appears again. If a term should remain in the original language, keep it unchanged consistently.\n")
+		builder.WriteString("\n---\n[Enhanced Context Translation Rules]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Maintain consistent %s translations for names, places, organizations, products, commands, and technical terms across the entire text. Reuse the same established translation whenever the same source term appears again. However, do not flatten meaningful surface-form differences such as titles, kinship labels, vocatives, or direct forms of address into one uniform rendering. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently.\n",
+			targetLabel,
+			targetLabel,
+		))
 
 		if glossary := strings.TrimSpace(settings.EnhancedContextGlossary); glossary != "" {
 			builder.WriteString("\nUse the following User Glossary for consistent translation. If these terms appear in the source text, they MUST be translated as specified:\n")
@@ -1222,19 +1229,19 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
-		builder.WriteString("\n# 3-2. Current Section\n")
+		builder.WriteString("\n---\n[Current Section]\n")
 		builder.WriteString(fmt.Sprintf("%s.\n", chunkLabel))
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
-		builder.WriteString("\n# 3-3. Previous Context\n")
+		builder.WriteString("\n---\n[Previous Context]\n")
 		builder.WriteString("Context from the previous translated section:\n")
 		builder.WriteString(contextSummary)
 		builder.WriteString("\nUse this only to preserve continuity and terminology. If it conflicts with the user instruction, ignore the conflicting part.\n")
 	}
 
 	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
-		builder.WriteString("\n# 3-4. Opening Style Anchor\n")
+		builder.WriteString("\n---\n[Opening Style Anchor]\n")
 		builder.WriteString("Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.\n")
 		builder.WriteString("Opening source paragraph:\n")
 		builder.WriteString(openingSource)
@@ -1247,20 +1254,23 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
-		builder.WriteString("\n# 3-5. Recent Source Overlap\n")
+		builder.WriteString("\n---\n[Recent Source Overlap]\n")
 		builder.WriteString("Recent source overlap for continuity:\n")
 		builder.WriteString(overlapContext)
 		builder.WriteString("\nUse this only as reference context. Do not translate or repeat this overlap again.\n")
 	}
 
-	builder.WriteString("\n# 4. Output Constraints And Source Text\n")
+	builder.WriteString("\n---\n[Output Constraints]\n")
 	builder.WriteString(fmt.Sprintf(
 		"Produce only the %s translation, without any additional explanations or commentary. Please translate the following %s text into %s:\n\n",
 		targetLabel,
 		sourceLabel,
 		targetLabel,
 	))
+	builder.WriteString("[End Of Instructions]\n")
+	builder.WriteString("---\n[Source Text Begins]\n")
 	builder.WriteString(sourceText)
+	builder.WriteString("\n---\n[Source Text Ends]\n")
 
 	return builder.String()
 }
@@ -1293,6 +1303,7 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	}
 
 	var builder strings.Builder
+	builder.WriteString("[Role And Core Persona]\n")
 	builder.WriteString(fmt.Sprintf(
 		"You are a professional %s to %s translation post-editor. Review the draft against the source and produce a clean final %s translation.\n",
 		sourceLabel,
@@ -1300,19 +1311,23 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		targetLabel,
 	))
 
-	builder.WriteString("\nInstruction priority rules:\n")
+	builder.WriteString("\n---\n[Instruction Priority Rules]\n")
 	builder.WriteString("- The user style instruction is mandatory for this chunk.\n")
 	builder.WriteString("- If the draft conflicts with the user instruction, revise the draft to match the instruction.\n")
 	builder.WriteString("- If previous context, overlap context, or opening style anchor conflicts with the user instruction, follow the user instruction.\n")
 
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
-		builder.WriteString("\nStyle instruction:\n")
+		builder.WriteString("\n---\n[Style Instruction]\n")
 		builder.WriteString(trimmedInstruction)
 		builder.WriteString("\n")
 	}
 
 	if len(protectedTerms) > 0 {
-		builder.WriteString("\nProtected names and terms:\n")
+		builder.WriteString("\n---\n[Protected Names And Terms]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Follow the user instruction and user glossary first for how these should be rendered. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
+			targetLabel,
+		))
 		for _, term := range protectedTerms {
 			builder.WriteString("- ")
 			builder.WriteString(term)
@@ -1321,19 +1336,19 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	}
 
 	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
-		builder.WriteString("\nCurrent section:\n")
+		builder.WriteString("\n---\n[Current Section]\n")
 		builder.WriteString(chunkLabel)
 		builder.WriteString("\n")
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
-		builder.WriteString("\nPrevious context:\n")
+		builder.WriteString("\n---\n[Previous Context]\n")
 		builder.WriteString(contextSummary)
 		builder.WriteString("\nUse this only to preserve continuity and terminology. Do not repeat already translated content.\n")
 	}
 
 	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
-		builder.WriteString("\nOpening style anchor:\n")
+		builder.WriteString("\n---\n[Opening Style Anchor]\n")
 		builder.WriteString("Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.\n")
 		builder.WriteString("Opening source paragraph:\n")
 		builder.WriteString(openingSource)
@@ -1346,32 +1361,49 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
-		builder.WriteString("\nRecent overlap:\n")
+		builder.WriteString("\n---\n[Recent Overlap]\n")
 		builder.WriteString(overlapContext)
 		builder.WriteString("\nUse this only as reference context. Do not repeat or retranslate this overlap.\n")
 	}
 
-	builder.WriteString("\nRules:\n")
-	builder.WriteString("- Make the smallest possible edits needed to correct the draft.\n")
+	builder.WriteString("\n---\n[Rules]\n")
+	builder.WriteString("- Make the smallest edits that still fully resolve awkwardness, mistranslation, broken phrasing, and mixed-language artifacts.\n")
 	builder.WriteString("- Preserve the source meaning strictly. Do not add, remove, generalize, or reinterpret facts, legal meanings, relationships, chronology, or emphasis.\n")
 	builder.WriteString("- Do not replace a specific institution, qualification, admission, or legal action with a different meaning.\n")
-	builder.WriteString("- Fix only clear errors: malformed transliterations, mixed-language fragments, stray foreign-script insertions, leftover untranslated words, or obvious mistranslations.\n")
+	builder.WriteString(fmt.Sprintf(
+		"- Do not revert already translated names, places, organizations, products, commands, or technical terms back into the source-language form unless the user instruction, user glossary, or source text explicitly requires the original %s spelling.\n",
+		sourceLabel,
+	))
+	builder.WriteString(fmt.Sprintf(
+		"- Fix clear errors aggressively when needed: malformed transliterations, mixed-language fragments, stray foreign-script insertions, leftover untranslated words, obvious mistranslations, or stiff literal phrasing that reads unnaturally in %s.\n",
+		targetLabel,
+	))
 	builder.WriteString("- Preserve intentional bilingual notation only when it is clearly marked with parentheses, quotes, aliases, or original-title notation.\n")
 	builder.WriteString("- User instruction compliance has priority over preserving the existing draft wording.\n")
-	builder.WriteString("- Compare the source against the low-temperature draft and revise only where a correction or clear naturalness improvement is justified.\n")
-	builder.WriteString("- If a sentence is already acceptable, keep it as close to the draft as possible.\n")
+	builder.WriteString("- Compare the source against the low-temperature draft and revise wherever a correction, fluency improvement, or more native phrasing is clearly justified.\n")
+	builder.WriteString(fmt.Sprintf(
+		"- If the draft is accurate but sounds translation-like, rewrite it into more natural %s phrasing while preserving the exact meaning.\n",
+		targetLabel,
+	))
+	builder.WriteString("- If a sentence is already accurate and natural, keep it close to the draft; otherwise prefer a cleaner final sentence over minimal surface edits.\n")
 	builder.WriteString("- Output only the final corrected translation.\n")
 
 	if settings.EnableTopicAwarePostEdit {
 		if topicHints := buildTopicAwarePostEditHints(sourceText, draftTranslation, instruction); topicHints != "" {
-			builder.WriteString("\nLikely genre/topic hint (weak guidance):\n")
+			builder.WriteString("\n---\n[Likely Genre Or Topic Hint]\n")
 			builder.WriteString(topicHints)
 			builder.WriteString("Use these hints only to improve register and terminology consistency. If they conflict with the source, ignore them.\n")
 		}
 	}
 
 	if settings.EnableEnhancedContextTranslation {
-		builder.WriteString("\nConsistency rule:\nMaintain consistent translations for names, places, organizations, products, commands, and technical terms.\n")
+		builder.WriteString(fmt.Sprintf(
+			"\n---\n[Consistency Rule]\nMaintain consistent %s translations for names, places, organizations, products, commands, and technical terms. If a term is already correctly rendered in %s, do not switch it back to the original %s form unless the user instruction, glossary, or source text explicitly requires that original form. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently.\n",
+			targetLabel,
+			targetLabel,
+			sourceLabel,
+			targetLabel,
+		))
 
 		if glossary := strings.TrimSpace(settings.EnhancedContextGlossary); glossary != "" {
 			builder.WriteString("User Glossary:\n")
@@ -1381,10 +1413,13 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		}
 	}
 
-	builder.WriteString("\nSource Text:\n")
+	builder.WriteString("\n---\n[End Of Instructions]\n")
+	builder.WriteString("---\n[Source Text Begins]\n")
 	builder.WriteString(sourceText)
-	builder.WriteString("\n\nTranslated Draft:\n")
+	builder.WriteString("\n---\n[Source Text Ends]\n")
+	builder.WriteString("---\n[Translated Draft Begins]\n")
 	builder.WriteString(draftTranslation)
+	builder.WriteString("\n---\n[Translated Draft Ends]\n")
 
 	return builder.String()
 }
@@ -1921,6 +1956,36 @@ func splitSentences(text string) []string {
 	return sentences
 }
 
+func trailingParagraphs(text string, maxChars int, maxParagraphs int) string {
+	paragraphs := splitParagraphs(strings.TrimSpace(text))
+	if len(paragraphs) == 0 {
+		return trailingRunes(text, maxChars)
+	}
+
+	if maxParagraphs <= 0 {
+		maxParagraphs = 1
+	}
+
+	collected := make([]string, 0, maxParagraphs)
+	total := 0
+	for i := len(paragraphs) - 1; i >= 0; i-- {
+		paragraphLen := len([]rune(paragraphs[i]))
+		separatorLen := 0
+		if total > 0 {
+			separatorLen = 2
+		}
+		if total > 0 && total+separatorLen+paragraphLen > maxChars {
+			break
+		}
+		collected = append([]string{paragraphs[i]}, collected...)
+		total += separatorLen + paragraphLen
+		if len(collected) >= maxParagraphs {
+			break
+		}
+	}
+	return strings.Join(collected, "\n\n")
+}
+
 func splitByRunes(text string, maxChars int) []string {
 	runes := []rune(text)
 	if len(runes) <= maxChars {
@@ -1976,17 +2041,17 @@ func leadingRunes(text string, maxChars int) string {
 }
 
 func buildContextSummary(settings ProviderSettings, instruction, sourceChunk, translatedChunk string) string {
-	sourceTail := trailingSentences(sourceChunk, 240)
-	translatedTail := trailingSentences(translatedChunk, 240)
+	sourceTail := trailingParagraphs(sourceChunk, 320, 2)
+	translatedTail := trailingParagraphs(translatedChunk, 320, 2)
 	parts := make([]string, 0, 5)
 	if styleMemory := buildStyleMemorySummary(settings, instruction, translatedChunk); styleMemory != "" {
 		parts = append(parts, styleMemory)
 	}
 	if sourceTail != "" {
-		parts = append(parts, "Source tail: "+sourceTail)
+		parts = append(parts, "Source tail:\n"+sourceTail)
 	}
 	if translatedTail != "" {
-		parts = append(parts, "Translated tail: "+translatedTail)
+		parts = append(parts, "Translated tail:\n"+translatedTail)
 	}
 	return strings.Join(parts, "\n")
 }
@@ -2001,10 +2066,12 @@ func buildStyleMemorySummary(settings ProviderSettings, instruction, translatedC
 	if tone := detectPostEditTone(translatedChunk, instruction); tone != "" {
 		lines = append(lines, "- Established tone/register so far: "+tone)
 	}
-	if lockedTerms := glossaryMemoryLines(settings.EnhancedContextGlossary, 4); len(lockedTerms) > 0 {
-		lines = append(lines, "- Locked terminology from glossary:")
-		for _, term := range lockedTerms {
-			lines = append(lines, "  "+term)
+	if settings.EnableEnhancedContextTranslation {
+		if lockedTerms := glossaryMemoryLines(settings.EnhancedContextGlossary, 4); len(lockedTerms) > 0 {
+			lines = append(lines, "- Locked terminology from glossary:")
+			for _, term := range lockedTerms {
+				lines = append(lines, "  "+term)
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -1231,6 +1231,11 @@ textarea {
   background: #f8f9fc;
   border: 1px solid var(--line);
   border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .debug-title {
@@ -1247,6 +1252,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .debug-card-header .debug-title {
@@ -1261,7 +1267,8 @@ textarea {
 
 .debug-card pre {
   margin: 0;
-  max-height: 240px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1279,14 +1286,21 @@ textarea {
 
 .debug-prompt-textarea {
   width: 100%;
-  min-height: 240px;
+  min-height: 0 !important;
+  height: auto;
+  max-height: 100%;
+  flex: 1;
+  box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.8rem;
-  line-height: 1.45;
+  font-size: 0.74rem;
+  line-height: 1.38;
+  padding: 10px 12px;
+  resize: none;
+  overflow: auto;
 }
 
 .debug-prompt-textarea-wide {
-  min-height: 420px;
+  min-height: 0;
 }
 
 .debug-studio-grid {
@@ -1300,22 +1314,28 @@ textarea {
 }
 
 .debug-pre-large {
-  max-height: 320px;
+  min-height: clamp(120px, 16vh, 180px);
 }
 
 .debug-pre-xl {
-  max-height: 420px;
+  min-height: clamp(140px, 20vh, 240px);
 }
 
 .debug-pre-xxl {
-  max-height: 560px;
+  min-height: clamp(170px, 25vh, 320px);
 }
 
 .debug-window-shell {
   min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   padding: 20px;
   background: #f3f6fb;
   color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .debug-window-header {
@@ -1349,7 +1369,70 @@ textarea {
 }
 
 .debug-studio-grid-window {
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "translation-prompt postedit-prompt"
+    "topic-hints topic-hints"
+    "translation-override postedit-override"
+    "request-log response-log";
+  grid-template-rows:
+    minmax(240px, 1.5fr)
+    minmax(96px, 0.55fr)
+    minmax(190px, 1fr)
+    minmax(150px, 0.9fr);
+}
+
+.debug-card-translation-prompt {
+  grid-area: translation-prompt;
+}
+
+.debug-card-postedit-prompt {
+  grid-area: postedit-prompt;
+}
+
+.debug-card-topic-hints {
+  grid-area: topic-hints;
+}
+
+.debug-card-translation-override {
+  grid-area: translation-override;
+  min-height: 0;
+}
+
+.debug-card-postedit-override {
+  grid-area: postedit-override;
+  min-height: 0;
+}
+
+.debug-card-request-log {
+  grid-area: request-log;
+}
+
+.debug-card-response-log {
+  grid-area: response-log;
+}
+
+.debug-preview-pre {
+  min-height: clamp(200px, 30vh, 360px);
+}
+
+.debug-card-translation-override .debug-card-header,
+.debug-card-postedit-override .debug-card-header {
+  margin-bottom: 10px;
+}
+
+.debug-card-translation-override .debug-card-actions,
+.debug-card-postedit-override .debug-card-actions {
+  gap: 6px;
+}
+
+.debug-card-translation-override .btn-small,
+.debug-card-postedit-override .btn-small {
+  font-size: 0.72rem;
 }
 
 .debug-window-toast {
@@ -2195,6 +2278,40 @@ textarea {
 
   .debug-grid {
     grid-template-columns: 1fr;
+  }
+
+  .debug-window-shell {
+    padding: 14px;
+  }
+
+  .debug-window-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .debug-studio-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .debug-studio-grid-window {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "translation-prompt"
+      "postedit-prompt"
+      "topic-hints"
+      "translation-override"
+      "postedit-override"
+      "request-log"
+      "response-log";
+    grid-template-rows:
+      minmax(220px, auto)
+      minmax(220px, auto)
+      minmax(96px, auto)
+      minmax(180px, auto)
+      minmax(180px, auto)
+      minmax(150px, auto)
+      minmax(150px, auto);
   }
 
   .progress-widget {

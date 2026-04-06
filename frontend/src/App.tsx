@@ -491,6 +491,19 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
     return nodes;
 }
 
+function renderInlineMarkdownLines(lines: string[]): React.ReactNode[] {
+    const nodes: React.ReactNode[] = [];
+
+    lines.forEach((line, index) => {
+        if (index > 0) {
+            nodes.push(<br key={`br-${index}`} />);
+        }
+        nodes.push(...renderInlineMarkdown(line));
+    });
+
+    return nodes;
+}
+
 function renderMarkdown(text: string): React.ReactNode {
     const normalized = sanitizeTranslation(text).replace(/\r\n/g, "\n");
     if (!normalized) {
@@ -563,7 +576,7 @@ function renderMarkdown(text: string): React.ReactNode {
                 quoteLines.push(lines[i].trim().replace(/^>\s+/, ""));
                 i += 1;
             }
-            elements.push(<blockquote key={`quote-${i}`}>{renderInlineMarkdown(quoteLines.join(" "))}</blockquote>);
+            elements.push(<blockquote key={`quote-${i}`}>{renderInlineMarkdownLines(quoteLines)}</blockquote>);
             continue;
         }
 
@@ -577,7 +590,7 @@ function renderMarkdown(text: string): React.ReactNode {
             paragraphLines.push(next);
             i += 1;
         }
-        elements.push(<p key={`p-${i}`}>{renderInlineMarkdown(paragraphLines.join(" "))}</p>);
+        elements.push(<p key={`p-${i}`}>{renderInlineMarkdownLines(paragraphLines)}</p>);
     }
 
     return elements;
@@ -696,19 +709,19 @@ function DebugStudioWindow(props: {
                 </div>
             )}
             <div className="debug-studio-grid debug-studio-grid-window">
-                <div className="debug-card debug-card-full">
+                <div className="debug-card debug-card-translation-prompt">
                     <div className="debug-title">Last Translation Prompt</div>
-                    <pre className="debug-pre-xxl">{lastTranslationPromptPreview || "No translation prompt rendered yet."}</pre>
+                    <pre className="debug-pre-xxl debug-preview-pre">{lastTranslationPromptPreview || "No translation prompt rendered yet."}</pre>
                 </div>
-                <div className="debug-card debug-card-full">
+                <div className="debug-card debug-card-postedit-prompt">
                     <div className="debug-title">Last Post-Edit Prompt</div>
-                    <pre className="debug-pre-xxl">{lastPostEditPromptPreview || "No post-edit prompt rendered yet."}</pre>
+                    <pre className="debug-pre-xxl debug-preview-pre">{lastPostEditPromptPreview || "No post-edit prompt rendered yet."}</pre>
                 </div>
-                <div className="debug-card debug-card-full">
+                <div className="debug-card debug-card-full debug-card-topic-hints">
                     <div className="debug-title">Last Topic-Aware Hints</div>
-                    <pre className="debug-pre-xl">{lastTopicAwareHintsPreview || "Topic-aware smart post-editing is off or no hints were generated yet."}</pre>
+                    <pre className="debug-pre-large">{lastTopicAwareHintsPreview || "Topic-aware smart post-editing is off or no hints were generated yet."}</pre>
                 </div>
-                <div className="debug-card">
+                <div className="debug-card debug-card-translation-override">
                     <div className="debug-card-header">
                         <div className="debug-title">Translation Prompt Override</div>
                         <div className="debug-card-actions">
@@ -739,7 +752,7 @@ function DebugStudioWindow(props: {
                         placeholder="Load the current rendered prompt, tweak it, and the edited text will be used as-is for debug translations."
                     />
                 </div>
-                <div className="debug-card">
+                <div className="debug-card debug-card-postedit-override">
                     <div className="debug-card-header">
                         <div className="debug-title">Post-Edit Prompt Override</div>
                         <div className="debug-card-actions">
@@ -770,11 +783,11 @@ function DebugStudioWindow(props: {
                         placeholder="Load the current rendered post-edit prompt, fine-tune its wording, and apply it only while debugging."
                     />
                 </div>
-                <div className="debug-card">
+                <div className="debug-card debug-card-request-log">
                     <div className="debug-title">Request Log</div>
                     <pre className="debug-pre-xl">{debugRequest || "No request captured yet."}</pre>
                 </div>
-                <div className="debug-card">
+                <div className="debug-card debug-card-response-log">
                     <div className="debug-title">Response Log</div>
                     <pre className="debug-pre-xl">{debugResponse || "No response captured yet."}</pre>
                 </div>
