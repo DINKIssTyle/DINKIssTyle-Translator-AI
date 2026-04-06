@@ -1036,7 +1036,8 @@ func applyAuth(req *http.Request, settings ProviderSettings) {
 func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, instruction string, runtimeOptions translationRuntimeOptions) string {
 	sourceLabel := normalizeLanguageLabel(sourceLang)
 	targetLabel := normalizeLanguageLabel(targetLang)
-	protectedTerms := extractProtectedTerms(sourceText)
+	glossary := effectiveGlossary(settings, sourceText)
+	protectedTerms := filterProtectedTermsByGlossary(extractProtectedTerms(sourceText), glossary)
 
 	var builder strings.Builder
 	if strings.TrimSpace(settings.DebugTranslationPromptTemplate) != "" {
@@ -1046,7 +1047,7 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 			"INSTRUCTION":                  strings.TrimSpace(instruction),
 			"SOURCE_TEXT":                  sourceText,
 			"PROTECTED_TERMS":              strings.Join(protectedTerms, "\n"),
-			"GLOSSARY":                     effectiveGlossary(settings),
+			"GLOSSARY":                     glossary,
 			"CHUNK_LABEL":                  strings.TrimSpace(runtimeOptions.ChunkLabel),
 			"CONTEXT_SUMMARY":              strings.TrimSpace(runtimeOptions.ContextSummary),
 			"OVERLAP_CONTEXT":              strings.TrimSpace(runtimeOptions.OverlapContext),
@@ -1082,32 +1083,32 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		builder.WriteString("No additional style instruction provided.\n")
 	}
 
+	if settings.EnableEnhancedContextTranslation {
+		builder.WriteString("\n---\n[Enhanced Context Translation Rules]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Maintain consistent %s translations for names, places, organizations, products, commands, and technical terms across the entire text. Reuse the same established translation whenever the same source term appears again. However, do not flatten meaningful surface-form differences such as titles, kinship labels, vocatives, or direct forms of address into one uniform rendering. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently. Explicit user glossary mappings override generic protected-term handling.\n",
+			targetLabel,
+			targetLabel,
+		))
+
+		if glossary != "" {
+			builder.WriteString("\nUse the following User Glossary for consistent translation. If these terms appear in the source text, they MUST be translated as specified:\n")
+			builder.WriteString("<GLOSSARY>\n")
+			builder.WriteString(glossary)
+			builder.WriteString("\n</GLOSSARY>\n")
+		}
+	}
+
 	if len(protectedTerms) > 0 {
 		builder.WriteString("\n---\n[Protected Names And Terms]\n")
 		builder.WriteString(fmt.Sprintf(
-			"Treat these as protected names or technical terms. Follow the user instruction and user glossary first for how they should be rendered. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
+			"Treat these as protected names or technical terms only when the user instruction and user glossary do not already define a rendering. These entries must not override any explicit glossary mapping. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
 			targetLabel,
 		))
 		for _, term := range protectedTerms {
 			builder.WriteString("- ")
 			builder.WriteString(term)
 			builder.WriteString("\n")
-		}
-	}
-
-	if settings.EnableEnhancedContextTranslation {
-		builder.WriteString("\n---\n[Enhanced Context Translation Rules]\n")
-		builder.WriteString(fmt.Sprintf(
-			"Maintain consistent %s translations for names, places, organizations, products, commands, and technical terms across the entire text. Reuse the same established translation whenever the same source term appears again. However, do not flatten meaningful surface-form differences such as titles, kinship labels, vocatives, or direct forms of address into one uniform rendering. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently.\n",
-			targetLabel,
-			targetLabel,
-		))
-
-		if glossary := strings.TrimSpace(settings.EnhancedContextGlossary); glossary != "" {
-			builder.WriteString("\nUse the following User Glossary for consistent translation. If these terms appear in the source text, they MUST be translated as specified:\n")
-			builder.WriteString("<GLOSSARY>\n")
-			builder.WriteString(glossary)
-			builder.WriteString("\n</GLOSSARY>\n")
 		}
 	}
 
@@ -1164,7 +1165,8 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, draftTranslation, instruction string, runtimeOptions translationRuntimeOptions) string {
 	sourceLabel := normalizeLanguageLabel(sourceLang)
 	targetLabel := normalizeLanguageLabel(targetLang)
-	protectedTerms := extractProtectedTerms(sourceText)
+	glossary := effectiveGlossary(settings, sourceText)
+	protectedTerms := filterProtectedTermsByGlossary(extractProtectedTerms(sourceText), glossary)
 
 	if strings.TrimSpace(settings.DebugPostEditPromptTemplate) != "" {
 		prompt := applyPromptTemplate(normalizeDebugPromptTemplateInput(settings.DebugPostEditPromptTemplate), map[string]string{
@@ -1174,7 +1176,7 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 			"SOURCE_TEXT":                  sourceText,
 			"DRAFT_TRANSLATION":            draftTranslation,
 			"PROTECTED_TERMS":              strings.Join(protectedTerms, "\n"),
-			"GLOSSARY":                     effectiveGlossary(settings),
+			"GLOSSARY":                     glossary,
 			"TOPIC_AWARE_HINTS":            topicAwarePostEditTemplateValue(settings, sourceText, draftTranslation, instruction),
 			"CHUNK_LABEL":                  strings.TrimSpace(runtimeOptions.ChunkLabel),
 			"CONTEXT_SUMMARY":              strings.TrimSpace(runtimeOptions.ContextSummary),
@@ -1203,19 +1205,6 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		builder.WriteString("\n---\n[Style Instruction]\n")
 		builder.WriteString(trimmedInstruction)
 		builder.WriteString("\n")
-	}
-
-	if len(protectedTerms) > 0 {
-		builder.WriteString("\n---\n[Protected Names And Terms]\n")
-		builder.WriteString(fmt.Sprintf(
-			"Follow the user instruction and user glossary first for how these should be rendered. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
-			targetLabel,
-		))
-		for _, term := range protectedTerms {
-			builder.WriteString("- ")
-			builder.WriteString(term)
-			builder.WriteString("\n")
-		}
 	}
 
 	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
@@ -1281,18 +1270,31 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 
 	if settings.EnableEnhancedContextTranslation {
 		builder.WriteString(fmt.Sprintf(
-			"\n---\n[Consistency Rule]\nMaintain consistent %s translations for names, places, organizations, products, commands, and technical terms. If a term is already correctly rendered in %s, do not switch it back to the original %s form unless the user instruction, glossary, or source text explicitly requires that original form. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently.\n",
+			"\n---\n[Consistency Rule]\nMaintain consistent %s translations for names, places, organizations, products, commands, and technical terms. If a term is already correctly rendered in %s, do not switch it back to the original %s form unless the user instruction, glossary, or source text explicitly requires that original form. If the user instruction or glossary specifies a transliteration or %s-script rendering, follow that specification consistently. Explicit user glossary mappings override generic protected-term handling.\n",
 			targetLabel,
 			targetLabel,
 			sourceLabel,
 			targetLabel,
 		))
 
-		if glossary := strings.TrimSpace(settings.EnhancedContextGlossary); glossary != "" {
+		if glossary != "" {
 			builder.WriteString("User Glossary:\n")
 			builder.WriteString("<GLOSSARY>\n")
 			builder.WriteString(glossary)
 			builder.WriteString("\n</GLOSSARY>\n")
+		}
+	}
+
+	if len(protectedTerms) > 0 {
+		builder.WriteString("\n---\n[Protected Names And Terms]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Follow the user instruction and user glossary first for how these should be rendered. These entries must not override any explicit glossary mapping. If no explicit rendering rule is given, keep them in their established %s form and handle them consistently:\n",
+			targetLabel,
+		))
+		for _, term := range protectedTerms {
+			builder.WriteString("- ")
+			builder.WriteString(term)
+			builder.WriteString("\n")
 		}
 	}
 
@@ -1444,11 +1446,152 @@ func normalizeDebugPromptTemplateInput(template string) string {
 	return replacer.Replace(template)
 }
 
-func effectiveGlossary(settings ProviderSettings) string {
+type glossaryEntry struct {
+	Source string
+	Target string
+}
+
+func parseGlossaryEntries(glossary string) []glossaryEntry {
+	lines := strings.Split(glossary, "\n")
+	entries := make([]glossaryEntry, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		separator := strings.Index(trimmed, "=")
+		if separator < 0 {
+			continue
+		}
+		source := strings.TrimSpace(trimmed[:separator])
+		target := strings.TrimSpace(trimmed[separator+1:])
+		if source == "" || target == "" {
+			continue
+		}
+		entries = append(entries, glossaryEntry{Source: source, Target: target})
+	}
+	return entries
+}
+
+func expandGlossaryEntries(entries []glossaryEntry, protectedTerms []string) []glossaryEntry {
+	if len(entries) == 0 || len(protectedTerms) == 0 {
+		return entries
+	}
+
+	seen := make(map[string]struct{}, len(entries))
+	expanded := make([]glossaryEntry, 0, len(entries)+8)
+	for _, entry := range entries {
+		key := strings.ToLower(strings.TrimSpace(entry.Source))
+		seen[key] = struct{}{}
+		expanded = append(expanded, entry)
+	}
+
+	for _, term := range protectedTerms {
+		trimmedTerm := strings.TrimSpace(term)
+		lowerTerm := strings.ToLower(trimmedTerm)
+		if trimmedTerm == "" {
+			continue
+		}
+		if _, exists := seen[lowerTerm]; exists {
+			continue
+		}
+
+		for _, entry := range entries {
+			source := strings.TrimSpace(entry.Source)
+			target := strings.TrimSpace(entry.Target)
+			if source == "" || target == "" {
+				continue
+			}
+
+			lowerSource := strings.ToLower(source)
+			if !strings.HasPrefix(lowerTerm, lowerSource) || len(trimmedTerm) <= len(source) {
+				continue
+			}
+
+			suffix := strings.TrimSpace(trimmedTerm[len(source):])
+			if suffix == "" {
+				continue
+			}
+			if !strings.HasPrefix(trimmedTerm[len(source):], " ") && !strings.HasPrefix(trimmedTerm[len(source):], "-") {
+				continue
+			}
+
+			derived := glossaryEntry{
+				Source: trimmedTerm,
+				Target: target + trimmedTerm[len(source):],
+			}
+			expanded = append(expanded, derived)
+			seen[lowerTerm] = struct{}{}
+			break
+		}
+	}
+
+	return expanded
+}
+
+func formatGlossaryEntries(entries []glossaryEntry) string {
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		source := strings.TrimSpace(entry.Source)
+		target := strings.TrimSpace(entry.Target)
+		if source == "" || target == "" {
+			continue
+		}
+		lines = append(lines, source+" = "+target)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func effectiveGlossary(settings ProviderSettings, sourceText string) string {
 	if !settings.EnableEnhancedContextTranslation {
 		return ""
 	}
-	return strings.TrimSpace(settings.EnhancedContextGlossary)
+	baseGlossary := strings.TrimSpace(settings.EnhancedContextGlossary)
+	if baseGlossary == "" {
+		return ""
+	}
+	entries := parseGlossaryEntries(baseGlossary)
+	entries = expandGlossaryEntries(entries, extractProtectedTerms(sourceText))
+	return formatGlossaryEntries(entries)
+}
+
+func glossarySourceTermSet(glossary string) map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, line := range strings.Split(glossary, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		separator := strings.Index(trimmed, "=")
+		if separator < 0 {
+			continue
+		}
+		source := strings.ToLower(strings.TrimSpace(trimmed[:separator]))
+		if source == "" {
+			continue
+		}
+		result[source] = struct{}{}
+	}
+	return result
+}
+
+func filterProtectedTermsByGlossary(protectedTerms []string, glossary string) []string {
+	if len(protectedTerms) == 0 {
+		return nil
+	}
+	glossaryTerms := glossarySourceTermSet(glossary)
+	if len(glossaryTerms) == 0 {
+		return protectedTerms
+	}
+
+	filtered := make([]string, 0, len(protectedTerms))
+	for _, term := range protectedTerms {
+		if _, exists := glossaryTerms[strings.ToLower(strings.TrimSpace(term))]; exists {
+			continue
+		}
+		filtered = append(filtered, term)
+	}
+	return filtered
 }
 
 // sanitizeDebugPromptOverride는 디버그 프롬프트 오버라이드에 대해

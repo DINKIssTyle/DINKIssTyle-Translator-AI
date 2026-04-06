@@ -128,6 +128,15 @@ type PromptSelectionModalState =
     | { type: "reasoning" }
     | null;
 
+type GlossaryTab = "user" | "extracted";
+
+type GlossaryRow = {
+    id: string;
+    source: string;
+    target: string;
+    frequency?: number;
+};
+
 const STORAGE_KEY = "dkst-translator-ai-settings";
 const SOURCE_LANGUAGES = ["auto", "English", "Korean", "Japanese", "Chinese", "French", "German"];
 const TARGET_LANGUAGES = ["Korean", "English", "Japanese", "Chinese", "French", "German"];
@@ -138,6 +147,17 @@ const MAX_EDITOR_FONT_SIZE = 26;
 const DEFAULT_REASONING = "off";
 const DEFAULT_TEMPERATURE = 0.4;
 const MIN_TEMPERATURE = 0;
+const GLOSSARY_STOPWORDS = new Set([
+    "the", "and", "that", "with", "from", "this", "have", "were", "their", "there", "into", "they",
+    "them", "then", "than", "when", "where", "what", "which", "will", "would", "could", "should",
+    "about", "after", "before", "under", "over", "between", "through", "while", "because", "being",
+    "been", "just", "very", "more", "most", "some", "such", "only", "also", "onto", "upon", "your",
+    "ours", "ourselves", "hers", "him", "his", "her", "its", "our", "for", "are", "was", "is", "to",
+    "of", "in", "on", "at", "by", "an", "or", "as", "it", "be", "if", "we", "you", "he", "she", "i",
+    "support", "series", "version", "versions", "system", "systems", "computer", "computers", "memory",
+    "machine", "machines", "update", "updates", "user", "users", "application", "applications",
+    "consumer", "consumers", "design", "constraint", "constraints", "average",
+]);
 const MAX_TEMPERATURE = 1;
 const TEMPERATURE_STEP = 0.1;
 const DEFAULT_WEB_SERVER_SETTINGS: WebServerSettings = {
@@ -457,6 +477,184 @@ function sanitizeTranslation(raw: string): string {
         .replace(/<<<\s*\/?output\s*>>>/gi, "")
         .replace(/<<<[^>\n]+>>>/g, "")
         .trim();
+}
+
+function createGlossaryRow(source = "", target = "", frequency?: number): GlossaryRow {
+    return {
+        id: `glossary-${Math.random().toString(36).slice(2, 10)}`,
+        source,
+        target,
+        frequency,
+    };
+}
+
+function parseGlossaryText(text: string): Array<{ source: string; target: string }> {
+    return text
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+            const separatorIndex = line.indexOf("=");
+            if (separatorIndex < 0) {
+                return null;
+            }
+            const source = line.slice(0, separatorIndex).trim();
+            const target = line.slice(separatorIndex + 1).trim();
+            if (!source) {
+                return null;
+            }
+            return { source, target };
+        })
+        .filter((entry): entry is { source: string; target: string } => Boolean(entry));
+}
+
+function serializeGlossaryRows(rows: GlossaryRow[]): string {
+    return rows
+        .map(row => `${row.source.trim()} = ${row.target.trim()}`)
+        .filter(line => line !== "=" && !line.startsWith(" =") && !line.endsWith("= "))
+        .join("\n");
+}
+
+function buildCombinedGlossary(userRows: GlossaryRow[], extractedRows: GlossaryRow[]): string {
+    const combined = new Map<string, GlossaryRow>();
+
+    [...userRows, ...extractedRows].forEach(row => {
+        const source = row.source.trim();
+        const target = row.target.trim();
+        if (!source || !target) {
+            return;
+        }
+        const key = source.toLocaleLowerCase();
+        if (!combined.has(key)) {
+            combined.set(key, { ...row, source, target });
+        }
+    });
+
+    return serializeGlossaryRows(Array.from(combined.values()));
+}
+
+function shouldCollapseGlossaryVariant(candidate: string, selected: string): boolean {
+    const normalizedCandidate = candidate.trim();
+    const normalizedSelected = selected.trim();
+    if (!normalizedCandidate || !normalizedSelected || normalizedCandidate === normalizedSelected) {
+        return false;
+    }
+
+    const lowerCandidate = normalizedCandidate.toLocaleLowerCase();
+    const lowerSelected = normalizedSelected.toLocaleLowerCase();
+
+    const isChildOfSelected = lowerCandidate.startsWith(`${lowerSelected} `) || lowerCandidate.startsWith(`${lowerSelected}-`);
+    const isParentOfSelected = lowerSelected.startsWith(`${lowerCandidate} `) || lowerSelected.startsWith(`${lowerCandidate}-`);
+
+    return isChildOfSelected || isParentOfSelected;
+}
+
+function extractFrequentGlossaryCandidates(text: string): GlossaryRow[] {
+    const normalized = text.replace(/\r\n/g, "\n");
+    const tokenPattern = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
+    const originalByKey = new Map<string, string>();
+    const counts = new Map<string, number>();
+    const boosts = new Map<string, number>();
+    const tokenKeys: string[] = [];
+    const tokenOriginals: string[] = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = tokenPattern.exec(normalized)) !== null) {
+        const original = match[0];
+        const key = original.toLocaleLowerCase();
+        tokenOriginals.push(original);
+        tokenKeys.push(key);
+        if (!originalByKey.has(key)) {
+            originalByKey.set(key, original);
+        }
+    }
+
+    const addCandidate = (phrase: string, boost = 0) => {
+        const cleaned = phrase.replace(/\s+/g, " ").trim();
+        if (!cleaned || cleaned.length < 3) {
+            return;
+        }
+        const key = cleaned.toLocaleLowerCase();
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if (!originalByKey.has(key)) {
+            originalByKey.set(key, cleaned);
+        }
+        boosts.set(key, (boosts.get(key) || 0) + boost);
+    };
+
+    tokenKeys.forEach((key, index) => {
+        if (GLOSSARY_STOPWORDS.has(key) || key.length < 3) {
+            return;
+        }
+        addCandidate(tokenOriginals[index], /^[A-Z0-9]/.test(tokenOriginals[index]) ? 2 : 0);
+    });
+
+    for (let i = 0; i < tokenKeys.length; i += 1) {
+        for (let size = 2; size <= 4; size += 1) {
+            const keySlice = tokenKeys.slice(i, i + size);
+            const originalSlice = tokenOriginals.slice(i, i + size);
+            if (keySlice.length < size) {
+                continue;
+            }
+            if (GLOSSARY_STOPWORDS.has(keySlice[0]) || GLOSSARY_STOPWORDS.has(keySlice[keySlice.length - 1])) {
+                continue;
+            }
+            const joined = originalSlice.join(" ");
+            const titleBoost = originalSlice.some(token => /^[A-Z0-9]/.test(token)) ? 3 : 0;
+            addCandidate(joined, titleBoost + size);
+        }
+    }
+
+    const scored = Array.from(counts.entries())
+        .map(([key, count]) => ({
+            key,
+            count,
+            boost: boosts.get(key) || 0,
+            original: originalByKey.get(key) || key,
+        }))
+        .filter(item => item.count >= 2)
+        .filter(item => item.original.length >= 3)
+        .sort((a, b) => {
+            const scoreA = a.count * 10 + a.boost + a.original.split(" ").length * 3;
+            const scoreB = b.count * 10 + b.boost + b.original.split(" ").length * 3;
+            return scoreB - scoreA;
+        });
+
+    const rows: GlossaryRow[] = [];
+    const seen = new Set<string>();
+    scored.forEach(item => {
+        if (rows.length >= 24) {
+            return;
+        }
+        const normalizedKey = item.original.toLocaleLowerCase();
+        if (seen.has(normalizedKey)) {
+            return;
+        }
+        if (rows.some(row => shouldCollapseGlossaryVariant(item.original, row.source))) {
+            return;
+        }
+        seen.add(normalizedKey);
+        rows.push(createGlossaryRow(item.original, "", item.count));
+    });
+    return rows;
+}
+
+function buildGlossaryDraftState(glossaryText: string, sourceText: string): { userRows: GlossaryRow[]; extractedRows: GlossaryRow[] } {
+    const parsedEntries = parseGlossaryText(glossaryText);
+    const savedMap = new Map(parsedEntries.map(entry => [entry.source.trim().toLocaleLowerCase(), entry.target.trim()]));
+    const extractedRows = extractFrequentGlossaryCandidates(sourceText).map(row => ({
+        ...row,
+        target: savedMap.get(row.source.trim().toLocaleLowerCase()) || "",
+    }));
+    const extractedKeys = new Set(extractedRows.map(row => row.source.trim().toLocaleLowerCase()));
+    const userRows = parsedEntries
+        .filter(entry => !extractedKeys.has(entry.source.trim().toLocaleLowerCase()))
+        .map(entry => createGlossaryRow(entry.source, entry.target));
+
+    return {
+        userRows: userRows.length > 0 ? userRows : [createGlossaryRow()],
+        extractedRows,
+    };
 }
 
 function renderInlineMarkdown(text: string): React.ReactNode[] {
@@ -834,7 +1032,9 @@ function App() {
     const [showModelPopover, setShowModelPopover] = useState(false);
     const [showEnhancedContextModal, setShowEnhancedContextModal] = useState(false);
     const [enhancedContextDraftEnabled, setEnhancedContextDraftEnabled] = useState(false);
-    const [enhancedContextDraftGlossary, setEnhancedContextDraftGlossary] = useState("");
+    const [enhancedContextUserRows, setEnhancedContextUserRows] = useState<GlossaryRow[]>([createGlossaryRow()]);
+    const [enhancedContextExtractedRows, setEnhancedContextExtractedRows] = useState<GlossaryRow[]>([]);
+    const [enhancedContextActiveTab, setEnhancedContextActiveTab] = useState<GlossaryTab>("user");
     const [settingsStatus, setSettingsStatus] = useState("");
     const [webServerSettings, setWebServerSettings] = useState<WebServerSettings>(DEFAULT_WEB_SERVER_SETTINGS);
     const [webServerPasswordDraft, setWebServerPasswordDraft] = useState("");
@@ -900,6 +1100,7 @@ function App() {
     const showReasoningControl = supportsReasoning || providerSettings.forceShowReasoning;
     const showTemperatureControl = providerSettings.forceShowTemperature;
     const cleanedTranslation = sanitizeTranslation(translation);
+    const enhancedContextDraftGlossary = buildCombinedGlossary(enhancedContextUserRows, enhancedContextExtractedRows);
     const sourceStats = getTextStats(sourceText);
     const translationStats = getTextStats(cleanedTranslation);
     const temperatureLabel = formatTemperatureLabel(providerSettings.temperature);
@@ -1608,8 +1809,11 @@ function App() {
             return;
         }
         setEnhancedContextDraftEnabled(providerSettings.enableEnhancedContextTranslation);
-        setEnhancedContextDraftGlossary(providerSettings.enhancedContextGlossary);
-    }, [showEnhancedContextModal, providerSettings.enableEnhancedContextTranslation, providerSettings.enhancedContextGlossary]);
+        const draftState = buildGlossaryDraftState(providerSettings.enhancedContextGlossary, sourceText);
+        setEnhancedContextUserRows(draftState.userRows);
+        setEnhancedContextExtractedRows(draftState.extractedRows);
+        setEnhancedContextActiveTab("user");
+    }, [showEnhancedContextModal, providerSettings.enableEnhancedContextTranslation, providerSettings.enhancedContextGlossary, sourceText]);
 
     useEffect(() => {
         if (!showSavedToast) {
@@ -2242,12 +2446,50 @@ function App() {
         showSavedToastMessage("Saved");
     };
 
-    const handleOpenEnhancedContextGlossary = async () => {
+    const updateGlossaryRows = (tab: GlossaryTab, updater: (rows: GlossaryRow[]) => GlossaryRow[]) => {
+        if (tab === "user") {
+            setEnhancedContextUserRows(prev => updater(prev));
+            return;
+        }
+        setEnhancedContextExtractedRows(prev => updater(prev));
+    };
+
+    const handleGlossaryRowChange = (tab: GlossaryTab, rowId: string, field: "source" | "target", value: string) => {
+        updateGlossaryRows(tab, rows => rows.map(row => row.id === rowId ? { ...row, [field]: value } : row));
+    };
+
+    const handleAddUserGlossaryRow = () => {
+        setEnhancedContextUserRows(prev => [...prev, createGlossaryRow()]);
+    };
+
+    const handleDeleteGlossaryRow = (tab: GlossaryTab, rowId: string) => {
+        updateGlossaryRows(tab, rows => {
+            const next = rows.filter(row => row.id !== rowId);
+            if (tab === "user" && next.length === 0) {
+                return [createGlossaryRow()];
+            }
+            return next;
+        });
+    };
+
+    const handleOpenEnhancedContextGlossary = async (tab: GlossaryTab) => {
         try {
             const content = await OpenFile();
             if (content !== undefined && content !== null && content !== "") {
-                setEnhancedContextDraftGlossary(content);
-                setStatusMessage("Loaded glossary content.");
+                const parsedRows = parseGlossaryText(content).map(entry => createGlossaryRow(entry.source, entry.target));
+                if (tab === "user") {
+                    setEnhancedContextUserRows(parsedRows.length > 0 ? parsedRows : [createGlossaryRow()]);
+                    announceAction("Loaded user glossary file.");
+                } else {
+                    setEnhancedContextExtractedRows(prev => {
+                        const parsedMap = new Map(parsedRows.map(row => [row.source.trim().toLocaleLowerCase(), row.target]));
+                        return prev.map(row => ({
+                            ...row,
+                            target: parsedMap.get(row.source.trim().toLocaleLowerCase()) || "",
+                        }));
+                    });
+                    announceAction("Loaded extracted-candidate glossary file.");
+                }
             }
         } catch (err: any) {
             console.error(err);
@@ -2255,16 +2497,29 @@ function App() {
         }
     };
 
-    const handleSaveEnhancedContextGlossary = async () => {
+    const handleSaveEnhancedContextGlossary = async (tab: GlossaryTab) => {
         try {
-            const savedPath = await SaveFile(enhancedContextDraftGlossary);
+            const content = tab === "user"
+                ? serializeGlossaryRows(enhancedContextUserRows.filter(row => row.source.trim() && row.target.trim()))
+                : serializeGlossaryRows(enhancedContextExtractedRows.filter(row => row.source.trim() && row.target.trim()));
+            const savedPath = await SaveFile(content);
             if (savedPath) {
-                setStatusMessage(`Saved glossary to: ${savedPath}`);
+                announceAction(`Saved glossary to: ${savedPath}`);
             }
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not save glossary file: ${String(err)}`);
         }
+    };
+
+    const handleClearEnhancedContextGlossary = (tab: GlossaryTab) => {
+        if (tab === "user") {
+            setEnhancedContextUserRows([createGlossaryRow()]);
+            announceAction("Cleared user glossary rows.");
+            return;
+        }
+        setEnhancedContextExtractedRows(prev => prev.map(row => ({ ...row, target: "" })));
+        announceAction("Cleared extracted glossary mappings.");
     };
 
     const handleInstructionPresetChange = (presetId: string) => {
@@ -3287,51 +3542,163 @@ function App() {
                     </div>
                 )}
                 {showEnhancedContextModal && (
-                    <div className="modal-overlay" onClick={handleCloseEnhancedContextModal}>
-                        <div className="modal-card modal-card-wide" onClick={e => e.stopPropagation()}>
+                    <div className="modal-overlay modal-overlay-fullscreen" onClick={handleCloseEnhancedContextModal}>
+                        <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <div>
                                     <div className="modal-title">Enhanced Context Translation</div>
-                                    <div className="modal-subtitle">Improve long-form terminology and name consistency with stronger context rules and a user glossary.</div>
+                                    <div className="modal-subtitle">Improve long-form terminology and name consistency with stronger context rules, a user glossary, and document-derived candidate terms.</div>
                                 </div>
                                 <button className="btn btn-secondary btn-small" onClick={handleCloseEnhancedContextModal} title="Save changes and close">
                                     OK
                                 </button>
                             </div>
-                            <div className="modal-body">
-                                <div className="settings-grid">
-                                    <label className="settings-checkbox">
-                                        <input
-                                            type="checkbox"
-                                            checked={enhancedContextDraftEnabled}
-                                            onChange={e => setEnhancedContextDraftEnabled(e.target.checked)}
-                                        />
-                                        <span>Use Enhanced Context Translation</span>
-                                    </label>
-                                    <label className="settings-field">
-                                        <div className="settings-field-header">
-                                            <span>User Glossary</span>
-                                            <div className="glossary-toolbar">
-                                                <button type="button" className="icon-btn" onClick={handleOpenEnhancedContextGlossary} title="Open Glossary File">
-                                                    <span className="material-symbols-outlined">folder_open</span>
-                                                </button>
-                                                <button type="button" className="icon-btn" onClick={handleSaveEnhancedContextGlossary} title="Save Glossary File">
-                                                    <span className="material-symbols-outlined">save</span>
-                                                </button>
-                                                <button type="button" className="icon-btn" onClick={() => setEnhancedContextDraftGlossary("")} title="Clear Glossary">
-                                                    <span className="material-symbols-outlined">delete</span>
-                                                </button>
-                                            </div>
+                            <div className="modal-body modal-body-fullscreen">
+                                <div className="enhanced-context-layout">
+                                    <div className="enhanced-context-sidebar">
+                                        <label className="settings-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                checked={enhancedContextDraftEnabled}
+                                                onChange={e => setEnhancedContextDraftEnabled(e.target.checked)}
+                                            />
+                                            <span>Use Enhanced Context Translation</span>
+                                        </label>
+                                        <div className="settings-note">
+                                            Rows are only used when the right-side user term is filled in.
                                         </div>
-                                        <textarea
-                                            className="settings-textarea glossary-textarea"
-                                            value={enhancedContextDraftGlossary}
-                                            onChange={e => setEnhancedContextDraftGlossary(e.target.value)}
-                                            placeholder={`One rule per line\nAlice = Alice\nGoogle Search = Google Search\nTypeScript = TypeScript`}
-                                        />
-                                    </label>
-                                    <div className="settings-note">
-                                        When enabled, the translator will prioritize consistent names and terminology across long texts, and apply your glossary before generating translations.
+                                        <div className="settings-note">
+                                            Final glossary entries: {parseGlossaryText(enhancedContextDraftGlossary).length}
+                                        </div>
+                                        <div className="settings-note">
+                                            Document-derived candidates: {enhancedContextExtractedRows.length}
+                                        </div>
+                                    </div>
+                                    <div className="enhanced-context-workspace">
+                                        <div className="enhanced-context-tabs" role="tablist" aria-label="Enhanced context tabs">
+                                            <button
+                                                type="button"
+                                                className={`btn btn-secondary enhanced-context-tab${enhancedContextActiveTab === "user" ? " is-active" : ""}`}
+                                                onClick={() => setEnhancedContextActiveTab("user")}
+                                            >
+                                                User Glossary
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={`btn btn-secondary enhanced-context-tab${enhancedContextActiveTab === "extracted" ? " is-active" : ""}`}
+                                                onClick={() => setEnhancedContextActiveTab("extracted")}
+                                            >
+                                                Frequent Terms From Document
+                                            </button>
+                                        </div>
+                                        {enhancedContextActiveTab === "user" ? (
+                                            <div className="enhanced-context-panel">
+                                                <div className="enhanced-context-toolbar">
+                                                    <div className="enhanced-context-toolbar-title">User-defined glossary rows</div>
+                                                    <div className="glossary-toolbar">
+                                                        <button type="button" className="icon-btn" onClick={handleAddUserGlossaryRow} title="Add Row">
+                                                            <span className="material-symbols-outlined">add</span>
+                                                        </button>
+                                                        <button type="button" className="icon-btn" onClick={() => void handleOpenEnhancedContextGlossary("user")} title="Open User Glossary File">
+                                                            <span className="material-symbols-outlined">folder_open</span>
+                                                        </button>
+                                                        <button type="button" className="icon-btn" onClick={() => void handleSaveEnhancedContextGlossary("user")} title="Save User Glossary File">
+                                                            <span className="material-symbols-outlined">save</span>
+                                                        </button>
+                                                        <button type="button" className="icon-btn" onClick={() => handleClearEnhancedContextGlossary("user")} title="Clear User Glossary">
+                                                            <span className="material-symbols-outlined">delete</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="enhanced-context-table-wrap">
+                                                    <table className="enhanced-context-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Source Term</th>
+                                                                <th>User Term</th>
+                                                                <th className="enhanced-context-col-actions">Actions</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {enhancedContextUserRows.map(row => (
+                                                                <tr key={row.id}>
+                                                                    <td data-label="Source Term">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={row.source}
+                                                                            onChange={e => handleGlossaryRowChange("user", row.id, "source", e.target.value)}
+                                                                            placeholder="Source term"
+                                                                        />
+                                                                    </td>
+                                                                    <td data-label="User Term">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={row.target}
+                                                                            onChange={e => handleGlossaryRowChange("user", row.id, "target", e.target.value)}
+                                                                            placeholder="Preferred target term"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="enhanced-context-row-actions" data-label="Actions">
+                                                                        <button type="button" className="icon-btn" onClick={() => handleDeleteGlossaryRow("user", row.id)} title="Delete Row">
+                                                                            <span className="material-symbols-outlined">delete</span>
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="enhanced-context-panel">
+                                                <div className="enhanced-context-toolbar">
+                                                    <div className="enhanced-context-toolbar-title">Frequent terms or phrases extracted without LLM</div>
+                                                    <div className="glossary-toolbar">
+                                                        <button type="button" className="icon-btn" onClick={() => void handleOpenEnhancedContextGlossary("extracted")} title="Open Extracted Glossary File">
+                                                            <span className="material-symbols-outlined">folder_open</span>
+                                                        </button>
+                                                        <button type="button" className="icon-btn" onClick={() => void handleSaveEnhancedContextGlossary("extracted")} title="Save Extracted Glossary File">
+                                                            <span className="material-symbols-outlined">save</span>
+                                                        </button>
+                                                        <button type="button" className="icon-btn" onClick={() => handleClearEnhancedContextGlossary("extracted")} title="Clear Extracted Glossary Mappings">
+                                                            <span className="material-symbols-outlined">delete</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="enhanced-context-table-wrap">
+                                                    <table className="enhanced-context-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Source Term</th>
+                                                                <th>User Term</th>
+                                                                <th className="enhanced-context-col-frequency">Hits</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {enhancedContextExtractedRows.map(row => (
+                                                                <tr key={row.id}>
+                                                                    <td data-label="Source Term">
+                                                                        <div className="enhanced-context-source-cell">{row.source}</div>
+                                                                    </td>
+                                                                    <td data-label="User Term">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={row.target}
+                                                                            onChange={e => handleGlossaryRowChange("extracted", row.id, "target", e.target.value)}
+                                                                            placeholder="Fill to activate this row"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="enhanced-context-frequency-cell" data-label="Hits">{row.frequency || "-"}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div className="settings-note enhanced-context-note">
+                                            The final USER GLOSSARY injected into prompts is built from both tabs together. Rows without a user term are ignored.
+                                        </div>
                                     </div>
                                 </div>
                             </div>

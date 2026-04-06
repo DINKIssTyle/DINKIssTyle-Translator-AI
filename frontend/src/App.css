@@ -1800,6 +1800,155 @@ textarea {
   margin-left: auto;
 }
 
+.enhanced-context-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 18px;
+  width: 100%;
+}
+
+.enhanced-context-sidebar,
+.enhanced-context-workspace {
+  min-width: 0;
+  min-height: 0;
+}
+
+.enhanced-context-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(214, 219, 228, 0.95);
+  border-radius: 18px;
+  background: rgba(248, 249, 252, 0.92);
+}
+
+.enhanced-context-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.enhanced-context-tabs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.enhanced-context-tab.is-active {
+  border-color: rgba(47, 124, 246, 0.34);
+  background: rgba(47, 124, 246, 0.12);
+  color: var(--accent);
+}
+
+.enhanced-context-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid rgba(214, 219, 228, 0.95);
+  border-radius: 18px;
+  background: rgba(248, 249, 252, 0.92);
+}
+
+.enhanced-context-toolbar {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.enhanced-context-toolbar-title {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.enhanced-context-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgba(214, 219, 228, 0.95);
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.enhanced-context-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.enhanced-context-table th,
+.enhanced-context-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(214, 219, 228, 0.78);
+  vertical-align: middle;
+}
+
+.enhanced-context-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f9fd;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+}
+
+.enhanced-context-table td input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(214, 219, 228, 0.95);
+  border-radius: 12px;
+  background: rgba(248, 249, 252, 0.86);
+  color: var(--text-main);
+}
+
+.enhanced-context-source-cell {
+  color: var(--text-main);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.enhanced-context-col-actions {
+  width: 80px;
+}
+
+.enhanced-context-col-frequency {
+  width: 88px;
+}
+
+.enhanced-context-row-actions,
+.enhanced-context-frequency-cell {
+  text-align: center;
+}
+
+.enhanced-context-note {
+  margin-top: 2px;
+}
+
+.enhanced-context-sidebar .settings-checkbox {
+  align-items: flex-start;
+}
+
+.enhanced-context-sidebar .settings-checkbox span {
+  line-height: 1.35;
+}
+
 .settings-note {
   padding: 10px 12px;
   border-radius: 12px;
@@ -1816,6 +1965,189 @@ textarea {
 
   .settings-columns {
     grid-template-columns: 1fr;
+  }
+
+  .enhanced-context-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .enhanced-context-sidebar {
+    padding: 14px;
+  }
+
+  .enhanced-context-panel {
+    padding: 14px;
+  }
+
+  .enhanced-context-toolbar {
+    align-items: stretch;
+  }
+
+  .enhanced-context-table th,
+  .enhanced-context-table td {
+    padding: 8px 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .modal-header {
+    padding: 16px 16px 12px;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .modal-title {
+    font-size: 0.98rem;
+    line-height: 1.25;
+  }
+
+  .modal-subtitle {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .modal-ok-btn,
+  .modal-header .btn.btn-secondary.btn-small {
+    min-height: 36px;
+    padding: 0 11px;
+    font-size: 0.84rem;
+  }
+
+  .modal-body-fullscreen {
+    padding: 12px 12px 16px;
+  }
+
+  .enhanced-context-layout {
+    gap: 12px;
+  }
+
+  .enhanced-context-sidebar {
+    gap: 10px;
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .enhanced-context-workspace {
+    gap: 10px;
+    min-height: auto;
+  }
+
+  .enhanced-context-tabs {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .enhanced-context-tab {
+    width: 100%;
+    justify-content: center;
+    min-height: 42px;
+  }
+
+  .enhanced-context-panel {
+    flex: 0 0 auto;
+    min-height: auto;
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .enhanced-context-toolbar {
+    margin-bottom: 10px;
+    gap: 10px;
+  }
+
+  .enhanced-context-toolbar-title {
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .glossary-toolbar {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .enhanced-context-table-wrap {
+    border-radius: 14px;
+    background: transparent;
+    border: none;
+    overflow: visible;
+  }
+
+  .enhanced-context-table,
+  .enhanced-context-table thead,
+  .enhanced-context-table tbody,
+  .enhanced-context-table tr,
+  .enhanced-context-table th,
+  .enhanced-context-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .enhanced-context-table thead {
+    display: none;
+  }
+
+  .enhanced-context-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .enhanced-context-table tr {
+    padding: 12px;
+    border: 1px solid rgba(214, 219, 228, 0.95);
+    border-radius: 16px;
+    background: #ffffff;
+  }
+
+  .enhanced-context-table td {
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .enhanced-context-table td + td {
+    margin-top: 10px;
+  }
+
+  .enhanced-context-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-soft);
+    font-size: 0.74rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .enhanced-context-table td input {
+    min-height: 42px;
+    font-size: 0.95rem;
+  }
+
+  .enhanced-context-source-cell {
+    font-size: 0.98rem;
+    line-height: 1.4;
+  }
+
+  .enhanced-context-row-actions {
+    text-align: left;
+  }
+
+  .enhanced-context-row-actions .icon-btn {
+    min-width: 42px;
+    min-height: 42px;
+  }
+
+  .enhanced-context-frequency-cell {
+    text-align: left;
+    font-size: 0.98rem;
+    font-weight: 700;
+  }
+
+  .enhanced-context-note {
+    margin-top: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
   }
 }
 
