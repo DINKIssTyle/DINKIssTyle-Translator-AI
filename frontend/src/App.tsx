@@ -46,6 +46,13 @@ type ReviewOverlayState = {
     text: string;
 };
 
+type OverallProgressEstimate = {
+    activeStep: number;
+    totalSteps: number;
+    stepStartedAt: number;
+    lastCompletedStepDurationMs: number;
+};
+
 type ProgressPayload = {
     stage?: string;
     label?: string;
@@ -488,6 +495,51 @@ function deriveOverallProgress(step?: number, total?: number, isDone?: boolean):
     }
     const completedStep = isDone ? step : Math.max(0, step - 1);
     return Math.max(0, Math.min(1, completedStep / total));
+}
+
+function createInitialOverallProgressEstimate(): OverallProgressEstimate {
+    return {
+        activeStep: 0,
+        totalSteps: 0,
+        stepStartedAt: 0,
+        lastCompletedStepDurationMs: 0,
+    };
+}
+
+function estimateTimedOverallProgress(progressState: Required<ProgressPayload>, estimate: OverallProgressEstimate, now: number): number {
+    const baseOverall = Math.max(0, Math.min(1, progressState.overall_progress || 0));
+    if (progressState.stage === "done") {
+        return 1;
+    }
+    if (progressState.total_steps <= 0 || progressState.current_step <= 0) {
+        return baseOverall;
+    }
+
+    const stepSpan = 1 / progressState.total_steps;
+    const stepStartOverall = Math.max(0, progressState.current_step - 1) * stepSpan;
+    const elapsedMs = estimate.stepStartedAt > 0 ? Math.max(0, now - estimate.stepStartedAt) : 0;
+    const expectedDurationMs = estimate.lastCompletedStepDurationMs > 0
+        ? estimate.lastCompletedStepDurationMs
+        : 4000;
+    const timedStepProgress = Math.max(0, Math.min(1, elapsedMs / expectedDurationMs));
+    let nextOverall = Math.max(baseOverall, stepStartOverall + timedStepProgress * stepSpan);
+
+    if (progressState.current_step >= progressState.total_steps) {
+        nextOverall = Math.min(nextOverall, 0.99);
+    }
+
+    return Math.max(baseOverall, Math.min(1, nextOverall));
+}
+
+function deriveStageRingProgress(stage: string, progress: number): number {
+    const safeProgress = Math.max(0, Math.min(1, progress || 0));
+    if (stage === "model_load") {
+        return Math.max(0, Math.min(1, safeProgress / 0.35));
+    }
+    if (stage === "prompt_processing") {
+        return Math.max(0, Math.min(1, (safeProgress - 0.4) / 0.4));
+    }
+    return safeProgress;
 }
 
 function sanitizeTranslation(raw: string): string {
@@ -1089,6 +1141,7 @@ function App() {
         visible: false,
         indeterminate: true,
     });
+    const [estimatedOverallProgress, setEstimatedOverallProgress] = useState(0);
     const [animatedProgressValue, setAnimatedProgressValue] = useState(0);
     const [debugTranslationPromptTemplate, setDebugTranslationPromptTemplate] = useState("");
     const [lastTranslationPromptPreview, setLastTranslationPromptPreview] = useState("");
@@ -1102,6 +1155,21 @@ function App() {
     const promptInputRef = useRef<HTMLTextAreaElement>(null);
     const didHydrateSettingsRef = useRef(false);
     const progressHideTimerRef = useRef<number | null>(null);
+    const progressStateRef = useRef<Required<ProgressPayload>>({
+        stage: "",
+        label: "",
+        detail: "",
+        progress: 0,
+        overall_progress: 0,
+        current_chunk: 0,
+        completed_chunks: 0,
+        total_chunks: 0,
+        current_step: 0,
+        total_steps: 0,
+        visible: false,
+        indeterminate: true,
+    });
+    const overallProgressEstimateRef = useRef<OverallProgressEstimate>(createInitialOverallProgressEstimate());
     const translateActionRef = useRef<() => void>(() => { });
     const openFileActionRef = useRef<() => void>(() => { });
     const latestStatsRef = useRef<TranslationStatsPayload | null>(null);
@@ -1151,6 +1219,7 @@ function App() {
         clearChunkTimers();
         renderedChunksRef.current = [];
         setTranslation("");
+        resetOverallProgressEstimate();
         refreshChunkPresentation();
         if (reviewOverlayTimerRef.current !== null) {
             window.clearTimeout(reviewOverlayTimerRef.current);
@@ -1249,10 +1318,8 @@ function App() {
     const instructionPresetValue = selectedInstructionPreset?.id || "custom";
     const reasoningLabel = providerSettings.reasoning || "Auto";
     const usesStageRing = progressState.stage === "model_load" || progressState.stage === "prompt_processing";
-    const completedOverallStep = progressState.total_steps > 0
-        ? (progressState.stage === "done" ? progressState.total_steps : Math.max(0, progressState.current_step - 1))
-        : 0;
-    const displayedProgressValue = usesStageRing ? progressState.progress : progressState.overall_progress;
+    const stageRingProgress = deriveStageRingProgress(progressState.stage, progressState.progress);
+    const displayedProgressValue = usesStageRing ? stageRingProgress : estimatedOverallProgress;
     const clampedAnimatedProgressValue = Math.max(0, Math.min(1, animatedProgressValue || 0));
     const progressPercent = Math.max(0, Math.min(100, Math.round(clampedAnimatedProgressValue * 100)));
     const progressRingRadius = 28;
@@ -1264,6 +1331,63 @@ function App() {
         : "Overall";
     const renderedChunks = renderedChunksRef.current;
     const shouldRenderLayeredChunks = renderedChunks.some(chunk => chunk && (chunk.showDraftSkeleton || chunk.phase === "final"));
+
+    const resetOverallProgressEstimate = () => {
+        overallProgressEstimateRef.current = createInitialOverallProgressEstimate();
+        setEstimatedOverallProgress(0);
+    };
+
+    const applyProgressPayload = (payload: ProgressPayload, visibilityFallback: boolean) => {
+        const previous = progressStateRef.current;
+        const nextCurrentStep = typeof payload.current_step === "number" ? payload.current_step : previous.current_step;
+        const nextTotalSteps = typeof payload.total_steps === "number" ? payload.total_steps : previous.total_steps;
+        const nextStage = payload.stage ?? previous.stage;
+        const nextOverallProgress = deriveOverallProgress(nextCurrentStep, nextTotalSteps, nextStage === "done");
+        const usesStageProgressRing = nextStage === "model_load" || nextStage === "prompt_processing";
+
+        if (!usesStageProgressRing) {
+            const now = performance.now();
+            const estimate = overallProgressEstimateRef.current;
+            const shouldResetEstimate = nextTotalSteps <= 0 || nextCurrentStep <= 0 || nextCurrentStep < estimate.activeStep || nextTotalSteps !== estimate.totalSteps;
+            if (shouldResetEstimate) {
+                overallProgressEstimateRef.current = createInitialOverallProgressEstimate();
+            }
+
+            const currentEstimate = overallProgressEstimateRef.current;
+            if (nextCurrentStep > 0 && nextTotalSteps > 0) {
+                if (currentEstimate.activeStep > 0 && nextCurrentStep > currentEstimate.activeStep && currentEstimate.stepStartedAt > 0) {
+                    currentEstimate.lastCompletedStepDurationMs = Math.max(1, now - currentEstimate.stepStartedAt);
+                }
+                if (nextCurrentStep !== currentEstimate.activeStep || currentEstimate.stepStartedAt <= 0) {
+                    currentEstimate.activeStep = nextCurrentStep;
+                    currentEstimate.totalSteps = nextTotalSteps;
+                    currentEstimate.stepStartedAt = now;
+                }
+            }
+        }
+
+        const nextState: Required<ProgressPayload> = {
+            stage: nextStage,
+            label: payload.label ?? previous.label,
+            detail: payload.detail ?? previous.detail,
+            progress: typeof payload.progress === "number" ? payload.progress : previous.progress,
+            overall_progress: usesStageProgressRing
+                ? previous.overall_progress
+                : (nextOverallProgress ?? previous.overall_progress),
+            current_chunk: typeof payload.current_chunk === "number" ? payload.current_chunk : previous.current_chunk,
+            completed_chunks: typeof payload.completed_chunks === "number" ? payload.completed_chunks : previous.completed_chunks,
+            total_chunks: typeof payload.total_chunks === "number" ? payload.total_chunks : previous.total_chunks,
+            current_step: nextCurrentStep,
+            total_steps: nextTotalSteps,
+            visible: payload.visible ?? visibilityFallback,
+            indeterminate: payload.indeterminate ?? previous.indeterminate,
+        };
+        progressStateRef.current = nextState;
+        setProgressState(nextState);
+        if (!usesStageProgressRing) {
+            setEstimatedOverallProgress(estimateTimedOverallProgress(nextState, overallProgressEstimateRef.current, performance.now()));
+        }
+    };
 
     const showSavedToastMessage = (message: string) => {
         setShowSavedToast(false);
@@ -1591,6 +1715,29 @@ function App() {
     }, [displayedProgressValue, progressState.visible]);
 
     useEffect(() => {
+        progressStateRef.current = progressState;
+    }, [progressState]);
+
+    useEffect(() => {
+        if (usesStageRing || !progressState.visible) {
+            setEstimatedOverallProgress(progressState.stage === "done" ? 1 : progressState.overall_progress);
+            return;
+        }
+
+        let frameId = 0;
+        const tick = () => {
+            setEstimatedOverallProgress(prev => {
+                const next = estimateTimedOverallProgress(progressStateRef.current, overallProgressEstimateRef.current, performance.now());
+                return Math.abs(next - prev) < 0.001 ? prev : next;
+            });
+            frameId = window.requestAnimationFrame(tick);
+        };
+
+        tick();
+        return () => window.cancelAnimationFrame(frameId);
+    }, [usesStageRing, progressState.visible, progressState.stage, progressState.overall_progress, progressState.current_step, progressState.total_steps]);
+
+    useEffect(() => {
         if (isBrowserMode) {
             setWindowMode("main");
             callBrowserJSON<ProviderSettings>("/api/client-config")
@@ -1845,17 +1992,27 @@ function App() {
             if (progressHideTimerRef.current !== null) {
                 window.clearTimeout(progressHideTimerRef.current);
             }
-            setProgressState(prev => ({
-                ...prev,
+            const nextState = {
+                ...progressStateRef.current,
                 stage: "done",
                 label: "Done",
                 detail: "Translation complete",
                 progress: 1,
+                overall_progress: 1,
+                current_step: progressStateRef.current.total_steps || progressStateRef.current.current_step,
+                completed_chunks: progressStateRef.current.total_chunks || progressStateRef.current.completed_chunks,
                 visible: true,
                 indeterminate: false,
-            }));
+            };
+            progressStateRef.current = nextState;
+            setProgressState(nextState);
+            setEstimatedOverallProgress(1);
             progressHideTimerRef.current = window.setTimeout(() => {
-                setProgressState(prev => ({ ...prev, visible: false }));
+                setProgressState(prev => {
+                    const next = { ...prev, visible: false };
+                    progressStateRef.current = next;
+                    return next;
+                });
                 progressHideTimerRef.current = null;
             }, 500);
         });
@@ -1882,23 +2039,7 @@ function App() {
                 window.clearTimeout(progressHideTimerRef.current);
                 progressHideTimerRef.current = null;
             }
-            const nextOverallProgress = deriveOverallProgress(payload.current_step, payload.total_steps, payload.stage === "done");
-            setProgressState(prev => ({
-                stage: payload.stage ?? prev.stage,
-                label: payload.label ?? prev.label,
-                detail: payload.detail ?? prev.detail,
-                progress: typeof payload.progress === "number" ? payload.progress : prev.progress,
-                overall_progress: (payload.stage === "model_load" || payload.stage === "prompt_processing")
-                    ? prev.overall_progress
-                    : (nextOverallProgress ?? prev.overall_progress),
-                current_chunk: typeof payload.current_chunk === "number" ? payload.current_chunk : prev.current_chunk,
-                completed_chunks: typeof payload.completed_chunks === "number" ? payload.completed_chunks : prev.completed_chunks,
-                total_chunks: typeof payload.total_chunks === "number" ? payload.total_chunks : prev.total_chunks,
-                current_step: typeof payload.current_step === "number" ? payload.current_step : prev.current_step,
-                total_steps: typeof payload.total_steps === "number" ? payload.total_steps : prev.total_steps,
-                visible: payload.visible ?? prev.visible,
-                indeterminate: payload.indeterminate ?? prev.indeterminate,
-            }));
+            applyProgressPayload(payload, progressStateRef.current.visible);
         });
 
         EventsOn("translation:stats", (payload: TranslationStatsPayload) => {
@@ -2281,23 +2422,7 @@ function App() {
                                 return;
                             }
                             if (event === "progress") {
-                                const nextOverallProgress = deriveOverallProgress(data?.current_step, data?.total_steps, data?.stage === "done");
-                                setProgressState(prev => ({
-                                    stage: data?.stage ?? prev.stage,
-                                    label: data?.label ?? prev.label,
-                                    detail: data?.detail ?? prev.detail,
-                                    progress: typeof data?.progress === "number" ? data.progress : prev.progress,
-                                    overall_progress: (data?.stage === "model_load" || data?.stage === "prompt_processing")
-                                        ? prev.overall_progress
-                                        : (nextOverallProgress ?? prev.overall_progress),
-                                    current_chunk: typeof data?.current_chunk === "number" ? data.current_chunk : prev.current_chunk,
-                                    completed_chunks: typeof data?.completed_chunks === "number" ? data.completed_chunks : prev.completed_chunks,
-                                    total_chunks: typeof data?.total_chunks === "number" ? data.total_chunks : prev.total_chunks,
-                                    current_step: typeof data?.current_step === "number" ? data.current_step : prev.current_step,
-                                    total_steps: typeof data?.total_steps === "number" ? data.total_steps : prev.total_steps,
-                                    visible: data?.visible ?? true,
-                                    indeterminate: data?.indeterminate ?? prev.indeterminate,
-                                }));
+                                applyProgressPayload(data || {}, true);
                                 return;
                             }
                             if (event === "stats") {
@@ -2310,25 +2435,30 @@ function App() {
                                 if (progressHideTimerRef.current !== null) {
                                     window.clearTimeout(progressHideTimerRef.current);
                                 }
-                                setProgressState({
+                                const nextState = {
+                                    ...progressStateRef.current,
                                     stage: "done",
                                     label: "Done",
                                     detail: "Translation complete",
                                     progress: 1,
                                     overall_progress: 1,
-                                    current_chunk: progressState.current_chunk,
-                                    completed_chunks: progressState.total_chunks || progressState.completed_chunks,
-                                    total_chunks: progressState.total_chunks,
-                                    current_step: progressState.total_steps || progressState.current_step,
-                                    total_steps: progressState.total_steps,
+                                    current_step: progressStateRef.current.total_steps || progressStateRef.current.current_step,
+                                    completed_chunks: progressStateRef.current.total_chunks || progressStateRef.current.completed_chunks,
                                     visible: true,
                                     indeterminate: false,
-                                });
+                                };
+                                progressStateRef.current = nextState;
+                                setProgressState(nextState);
+                                setEstimatedOverallProgress(1);
                                 progressHideTimerRef.current = window.setTimeout(() => {
                                     if (!isActiveRun()) {
                                         return;
                                     }
-                                    setProgressState(prev => ({ ...prev, visible: false }));
+                                    setProgressState(prev => {
+                                        const next = { ...prev, visible: false };
+                                        progressStateRef.current = next;
+                                        return next;
+                                    });
                                     progressHideTimerRef.current = null;
                                 }, 500);
                                 return;
@@ -2369,14 +2499,18 @@ function App() {
                 ...providerSettings,
                 reasoning: "",
             };
-            setProgressState(prev => ({
-                ...prev,
-                stage: "retrying",
-                label: "Retrying translation",
-                detail: "Reasoning unsupported. Switched to Auto.",
-                visible: true,
-                indeterminate: true,
-            }));
+            setProgressState(prev => {
+                const next = {
+                    ...prev,
+                    stage: "retrying",
+                    label: "Retrying translation",
+                    detail: "Reasoning unsupported. Switched to Auto.",
+                    visible: true,
+                    indeterminate: true,
+                };
+                progressStateRef.current = next;
+                return next;
+            });
             setProviderSettings(fallbackSettings);
             persistSettings(
                 selectedModel,
@@ -2395,14 +2529,18 @@ function App() {
             if (!isActiveRun()) {
                 throw new Error("Translation cancelled.");
             }
-            setProgressState(prev => ({
-                ...prev,
-                stage: "retrying",
-                label: "Retrying translation",
-                detail: "Reasoning option unsupported. Retrying without reasoning parameter.",
-                visible: true,
-                indeterminate: true,
-            }));
+            setProgressState(prev => {
+                const next = {
+                    ...prev,
+                    stage: "retrying",
+                    label: "Retrying translation",
+                    detail: "Reasoning option unsupported. Retrying without reasoning parameter.",
+                    visible: true,
+                    indeterminate: true,
+                };
+                progressStateRef.current = next;
+                return next;
+            });
             setStatusMessage("Retrying without reasoning parameter.");
             await runTranslation({
                 ...providerSettings,
@@ -2422,7 +2560,8 @@ function App() {
         setTranslation("");
         latestStatsRef.current = null;
         setElapsedSeconds(0);
-        setProgressState({
+        resetOverallProgressEstimate();
+        const nextInitialProgressState = {
             stage: "preparing",
             label: "Preparing request",
             detail: providerSettings.mode === "lmstudio" ? "Connecting to LM Studio" : "Connecting to LLM endpoint",
@@ -2435,7 +2574,9 @@ function App() {
             total_steps: 0,
             visible: true,
             indeterminate: true,
-        });
+        };
+        progressStateRef.current = nextInitialProgressState;
+        setProgressState(nextInitialProgressState);
         setIsTranslating(true);
         setStatusMessage(`Translating ${sourceLang} -> ${targetLang} with "${selectedModel}".`);
         try {
@@ -2463,7 +2604,11 @@ function App() {
                         setStatusMessage(`Translation failed: ${retryMessage}`);
                         alert("Translation failed: " + retryErr);
                     }
-                    setProgressState(prev => ({ ...prev, visible: false }));
+                    setProgressState(prev => {
+                        const next = { ...prev, visible: false };
+                        progressStateRef.current = next;
+                        return next;
+                    });
                 }
             } else if (
                 providerSettings.reasoning &&
@@ -2483,12 +2628,20 @@ function App() {
                         setStatusMessage(`Translation failed: ${retryMessage}`);
                         alert("Translation failed: " + retryErr);
                     }
-                    setProgressState(prev => ({ ...prev, visible: false }));
+                    setProgressState(prev => {
+                        const next = { ...prev, visible: false };
+                        progressStateRef.current = next;
+                        return next;
+                    });
                 }
             } else {
                 setStatusMessage(`Translation failed: ${message}`);
                 alert("Translation failed: " + err);
-                setProgressState(prev => ({ ...prev, visible: false }));
+                setProgressState(prev => {
+                    const next = { ...prev, visible: false };
+                    progressStateRef.current = next;
+                    return next;
+                });
             }
         } finally {
             if (isActiveRun()) {
@@ -2516,7 +2669,11 @@ function App() {
             setStatusMessage(`Cancel failed: ${String(err)}`);
         }
         setIsTranslating(false);
-        setProgressState(prev => ({ ...prev, visible: false }));
+        setProgressState(prev => {
+            const next = { ...prev, visible: false };
+            progressStateRef.current = next;
+            return next;
+        });
     };
 
     const handleOpenFile = async () => {
