@@ -419,6 +419,46 @@ function formatTemperatureLabel(value: number): string {
     return value.toFixed(1);
 }
 
+function isSelectionInsideNode(selection: Selection | null, node: Node | null): boolean {
+    if (!selection || !node) {
+        return false;
+    }
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    return Boolean(
+        (anchorNode && node.contains(anchorNode)) ||
+        (focusNode && node.contains(focusNode))
+    );
+}
+
+async function copyTextWithDomFallback(text: string): Promise<boolean> {
+    if (typeof document === "undefined") {
+        return false;
+    }
+
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "true");
+    textArea.setAttribute("aria-hidden", "true");
+    textArea.style.position = "fixed";
+    textArea.style.top = "0";
+    textArea.style.left = "-9999px";
+    textArea.style.opacity = "0";
+    textArea.style.pointerEvents = "none";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+
+    try {
+        return document.execCommand("copy");
+    } catch {
+        return false;
+    } finally {
+        document.body.removeChild(textArea);
+    }
+}
+
 function getTextStats(text: string): string {
     const lines = text
         ? text.split(/\r?\n/).filter(line => line.trim() !== "").length
@@ -1252,6 +1292,22 @@ function App() {
         return outputRef.current;
     };
 
+    const selectAllInTranslationContainer = () => {
+        const container = getActiveTranslationContainer();
+        if (!container) {
+            return false;
+        }
+        const selection = window.getSelection();
+        if (!selection) {
+            return false;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
+    };
+
     const clearTranslationSearchHighlights = () => {
         [outputRef.current, translationViewerRef.current].forEach(container => {
             if (!container) {
@@ -1860,6 +1916,25 @@ function App() {
             const isMod = event.metaKey || event.ctrlKey;
             if (!isMod) {
                 return;
+            }
+
+            if (event.key.toLowerCase() === "a") {
+                const selection = window.getSelection();
+                const activeElement = document.activeElement as HTMLElement | null;
+                const activeTranslationContainer = getActiveTranslationContainer();
+                const isTypingField = activeElement instanceof HTMLInputElement
+                    || activeElement instanceof HTMLTextAreaElement
+                    || Boolean(activeElement?.isContentEditable);
+                const shouldSelectTranslationOnly = !isTypingField && (
+                    isSelectionInsideNode(selection, outputRef.current)
+                    || isSelectionInsideNode(selection, translationViewerRef.current)
+                    || (activeTranslationContainer ? activeTranslationContainer.contains(activeElement) : false)
+                );
+
+                if (shouldSelectTranslationOnly && selectAllInTranslationContainer()) {
+                    event.preventDefault();
+                    return;
+                }
             }
 
             if (event.key.toLowerCase() === "t") {
@@ -2560,11 +2635,22 @@ function App() {
                 announceAction("There is no translated text to copy.");
                 return;
             }
-            if (isBrowserMode && navigator.clipboard) {
-                await navigator.clipboard.writeText(cleanedTranslation);
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(cleanedTranslation);
+                    announceAction("Copied translation to clipboard.");
+                    return;
+                } catch (clipboardErr) {
+                    console.warn("Navigator clipboard write failed, falling back.", clipboardErr);
+                }
+            }
+
+            const domCopyWorked = await copyTextWithDomFallback(cleanedTranslation);
+            if (domCopyWorked) {
                 announceAction("Copied translation to clipboard.");
                 return;
             }
+
             const ok = await ClipboardSetText(cleanedTranslation);
             if (ok) {
                 announceAction("Copied translation to clipboard.");
@@ -2575,6 +2661,14 @@ function App() {
             console.error(err);
             setStatusMessage(`Could not copy translation: ${String(err)}`);
         }
+    };
+
+    const handleTranslationCopyEvent = (event: React.ClipboardEvent<HTMLDivElement>) => {
+        if (!cleanedTranslation) {
+            return;
+        }
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", cleanedTranslation);
     };
 
     const handleOpenDebugStudioWindow = () => {
@@ -3140,7 +3234,7 @@ function App() {
                             </div>
                         </div>
                         <div className="pane-body">
-                            <div className="translation-output markdown-output" ref={outputRef} style={{ fontSize: `${editorFontSize}px` }}>
+                            <div className="translation-output markdown-output" ref={outputRef} onCopy={handleTranslationCopyEvent} style={{ fontSize: `${editorFontSize}px` }}>
                                 {shouldRenderLayeredChunks ? (
                                     <div className="translation-stream-layered" data-version={chunkPresentationVersion}>
                                         {renderedChunks.map((chunk, index) => {
@@ -3407,6 +3501,7 @@ function App() {
                                 <div
                                     ref={translationViewerRef}
                                     className="translation-output markdown-output fullscreen-viewer"
+                                    onCopy={handleTranslationCopyEvent}
                                     style={{ fontSize: `${editorFontSize}px` }}
                                 >
                                     {renderMarkdown(cleanedTranslation)}

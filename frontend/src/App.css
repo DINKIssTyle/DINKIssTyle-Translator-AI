@@ -1124,6 +1124,9 @@ textarea {
   background-color: rgba(148, 163, 184, 0.22);
   -webkit-background-clip: text;
   background-clip: text;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
   transition: opacity 3000ms ease;
 }
 
