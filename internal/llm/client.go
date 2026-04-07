@@ -1404,9 +1404,9 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 	builder.WriteString("Output ONLY the exact format below. Do not add any other text or conversational filler.\n\n")
 
 	// 구조적 명확성을 위해 중괄호 포맷 강조
-	builder.WriteString("{draft: full draft translation}\n\n")
+	builder.WriteString(fmt.Sprintf("{draft: full draft translation in %s}\n\n", targetLabel))
 	builder.WriteString("{review: brief revision notes}\n\n")
-	builder.WriteString("{final: final natural translation}\n\n")
+	builder.WriteString(fmt.Sprintf("{final: final natural translation in %s}\n\n", targetLabel))
 
 	builder.WriteString("Hard requirements:\n")
 	builder.WriteString("- The response must contain the COMPLETE translation of the input, not just the beginning.\n")
@@ -1414,7 +1414,8 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 	builder.WriteString("- The very first characters of your reply must be `{draft:`.\n")
 	builder.WriteString("- The very last character of your reply must be `}`.\n")
 	builder.WriteString("- Do not output introductions, explanations, labels like 'Step 1', or Markdown code fences (```).\n")
-	builder.WriteString("- Keep the {draft:} faithful and literal.\n")
+	builder.WriteString(fmt.Sprintf("- The {draft:} must be written entirely in %s unless the source explicitly requires retained original-language text.\n", targetLabel))
+	builder.WriteString(fmt.Sprintf("- Keep the {draft:} faithful and close to the source, but still fully translated into natural %s wording at the sentence level.\n", targetLabel))
 	// builder.WriteString("- Keep the {review:} concise and practical.\n")
 	// 기존의 짧은 리뷰 지시를 아래 내용으로 교체
 	builder.WriteString("- Formulate the {review:} strictly as a bulleted list. Do not write paragraphs.\n")
@@ -1423,6 +1424,7 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 	builder.WriteString("- Focus ONLY on unnatural phrasing, structural adjustments, tone, and incorrect language carry-over. If no changes are needed, write `- Issue: None -> Fix: None`.\n")
 	// 기존 프롬프트
 	builder.WriteString(fmt.Sprintf("- Make the {final:} more natural in %s while preserving all meaning and paragraph breaks.\n", targetLabel))
+	builder.WriteString(fmt.Sprintf("- The {final:} must also be written entirely in %s unless the source explicitly requires retained original-language text.\n", targetLabel))
 	builder.WriteString("- The user style instruction is mandatory.\n")
 
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
