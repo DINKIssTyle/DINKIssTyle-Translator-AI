@@ -215,6 +215,8 @@ type TranslationStatsPayload struct {
 type translationRuntimeOptions struct {
 	ContextSummary             string
 	ChunkLabel                 string
+	CurrentChunkIndex          int
+	TotalChunks                int
 	OverlapContext             string
 	OpeningSourceParagraph     string
 	OpeningTranslatedParagraph string
@@ -462,6 +464,7 @@ func (s *inlineProofreadStreamState) consume(piece string) (string, string, stri
 
 func (p inlineProofreadPass) apply(reqData TranslationRequest, options translationRuntimeOptions, currentChunk int, totalChunks int) (inlineProofreadResult, TranslationStatsPayload, error) {
 	prompt := buildInlineProofreadPrompt(reqData.Settings, reqData.SourceLang, reqData.TargetLang, reqData.SourceText, reqData.Instruction, options)
+	topicAwareHints := topicAwarePostEditTemplateValue(reqData.Settings, reqData.SourceText, "", reqData.Instruction)
 	resolvedTemperature := resolveInlineProofreadTemperature(reqData.Settings)
 	streamState := inlineProofreadStreamState{}
 	emitChunkUpdate := func(phase string, text string) {
@@ -505,6 +508,7 @@ func (p inlineProofreadPass) apply(reqData TranslationRequest, options translati
 	}
 
 	p.client.emitDebug("note", "prompt:translation", prompt)
+	p.client.emitDebug("note", "prompt:topic-aware-hints", topicAwareHints)
 	p.client.emitDebug("note", "temperature:translation", formatTemperatureDebugNote("inline-proofread", resolvedTemperature))
 
 	var (
@@ -589,11 +593,45 @@ func (m *contextMemory) runtimeOptions(chunk smartChunk, currentChunk int, total
 	return translationRuntimeOptions{
 		ContextSummary:             m.previousSummary,
 		ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", currentChunk, totalChunks),
+		CurrentChunkIndex:          currentChunk,
+		TotalChunks:                totalChunks,
 		OverlapContext:             chunk.OverlapContext,
 		OpeningSourceParagraph:     m.openingSourceParagraph,
 		OpeningTranslatedParagraph: m.openingTranslatedParagraph,
 		ProgressMetrics:            buildProgressMetrics(totalChunks, currentChunk, m.separatePostEditPass, "translate"),
 		OverallProgressBase:        derefFloat(overallPassProgress(totalChunks, currentChunk, m.separatePostEditPass, "translate")),
+	}
+}
+
+func useFullOpeningAnchor(currentChunk int) bool {
+	return currentChunk <= 0 || currentChunk <= 2
+}
+
+func appendOpeningAnchorSection(builder *strings.Builder, runtimeOptions translationRuntimeOptions, compactInstruction string) {
+	openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph)
+	if openingSource == "" {
+		return
+	}
+
+	builder.WriteString(compactInstruction)
+	builder.WriteString("\n")
+
+	if !useFullOpeningAnchor(runtimeOptions.CurrentChunkIndex) {
+		if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
+			builder.WriteString("Opening translated tone anchor:\n")
+			builder.WriteString(singleLinePreview(openingTranslated, 160))
+			builder.WriteString("\n")
+		}
+		return
+	}
+
+	builder.WriteString("Opening source paragraph:\n")
+	builder.WriteString(openingSource)
+	builder.WriteString("\n")
+	if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
+		builder.WriteString("Opening translated paragraph:\n")
+		builder.WriteString(openingTranslated)
+		builder.WriteString("\n")
 	}
 }
 
@@ -1319,17 +1357,9 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		builder.WriteString("\nUse this only to preserve continuity and terminology. If it conflicts with the user instruction, ignore the conflicting part.\n")
 	}
 
-	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
+	if strings.TrimSpace(runtimeOptions.OpeningSourceParagraph) != "" {
 		builder.WriteString("\n---\n[Opening Style Anchor]\n")
-		builder.WriteString("Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.\n")
-		builder.WriteString("Opening source paragraph:\n")
-		builder.WriteString(openingSource)
-		builder.WriteString("\n")
-		if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
-			builder.WriteString("Opening translated paragraph:\n")
-			builder.WriteString(openingTranslated)
-			builder.WriteString("\n")
-		}
+		appendOpeningAnchorSection(&builder, runtimeOptions, "Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.")
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
@@ -1435,17 +1465,9 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 		builder.WriteString("\nUse this only to preserve continuity and terminology. Do not repeat already translated content.\n")
 	}
 
-	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
+	if strings.TrimSpace(runtimeOptions.OpeningSourceParagraph) != "" {
 		builder.WriteString("\n[Opening Style Anchor]\n")
-		builder.WriteString("Use the opening paragraph only as weak guidance for voice and register. Do not copy it.\n")
-		builder.WriteString("Opening source paragraph:\n")
-		builder.WriteString(openingSource)
-		builder.WriteString("\n")
-		if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
-			builder.WriteString("Opening translated paragraph:\n")
-			builder.WriteString(openingTranslated)
-			builder.WriteString("\n")
-		}
+		appendOpeningAnchorSection(&builder, runtimeOptions, "Use the opening paragraph only as weak guidance for voice and register. Do not copy it.")
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
@@ -1527,17 +1549,9 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		builder.WriteString("\nUse this only to preserve continuity and terminology. Do not repeat already translated content.\n")
 	}
 
-	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
+	if strings.TrimSpace(runtimeOptions.OpeningSourceParagraph) != "" {
 		builder.WriteString("\n---\n[Opening Style Anchor]\n")
-		builder.WriteString("Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.\n")
-		builder.WriteString("Opening source paragraph:\n")
-		builder.WriteString(openingSource)
-		builder.WriteString("\n")
-		if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
-			builder.WriteString("Opening translated paragraph:\n")
-			builder.WriteString(openingTranslated)
-			builder.WriteString("\n")
-		}
+		appendOpeningAnchorSection(&builder, runtimeOptions, "Use the opening paragraph only as weak guidance for narrative voice, register, and stylistic consistency. Do not copy it, do not force archaic diction, and do not override the current source text.")
 	}
 
 	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
@@ -1809,6 +1823,10 @@ func detectPostEditGenre(sourceText, draftTranslation, instruction string) strin
 }
 
 func detectPostEditTopic(sourceText, draftTranslation string) string {
+	if heading := topicHeadingPreview(sourceText); heading != "" {
+		return heading
+	}
+
 	candidate := firstNonEmptyLine(sourceText)
 	if candidate == "" {
 		candidate = firstNonEmptyLine(draftTranslation)
@@ -1816,11 +1834,7 @@ func detectPostEditTopic(sourceText, draftTranslation string) string {
 	if candidate == "" {
 		return ""
 	}
-	words := strings.Fields(candidate)
-	if len(words) > 12 {
-		words = words[:12]
-	}
-	return strings.TrimSpace(strings.Join(words, " "))
+	return shortenTopicCandidate(candidate, 8, 56)
 }
 
 func detectPostEditTone(draftTranslation, instruction string) string {
@@ -1863,6 +1877,76 @@ func firstNonEmptyLine(text string) string {
 		return trimmed
 	}
 	return ""
+}
+
+func firstNonEmptyLines(text string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	lines := make([]string, 0, limit)
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, trimmed)
+		if len(lines) >= limit {
+			break
+		}
+	}
+	return lines
+}
+
+func topicHeadingPreview(text string) string {
+	lines := firstNonEmptyLines(text, 4)
+	if len(lines) == 0 {
+		return ""
+	}
+
+	headings := make([]string, 0, 2)
+	for _, line := range lines {
+		if !isLikelyTopicHeading(line) {
+			break
+		}
+		headings = append(headings, shortenTopicCandidate(line, 8, 56))
+		if len(headings) >= 2 {
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(headings, " / "))
+}
+
+func isLikelyTopicHeading(line string) bool {
+	normalized := strings.TrimSpace(line)
+	if normalized == "" {
+		return false
+	}
+	wordCount := len(strings.Fields(normalized))
+	runeCount := len([]rune(normalized))
+	if wordCount == 0 || wordCount > 10 || runeCount > 72 {
+		return false
+	}
+	if strings.HasSuffix(normalized, ".") || strings.HasSuffix(normalized, "?") || strings.HasSuffix(normalized, "!") {
+		return false
+	}
+	return true
+}
+
+func shortenTopicCandidate(text string, maxWords int, maxRunes int) string {
+	normalized := strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	normalized = strings.Trim(normalized, "\"'[](){}")
+	if normalized == "" {
+		return ""
+	}
+	words := strings.Fields(normalized)
+	if maxWords > 0 && len(words) > maxWords {
+		normalized = strings.Join(words[:maxWords], " ")
+	}
+	runes := []rune(normalized)
+	if maxRunes > 0 && len(runes) > maxRunes {
+		normalized = strings.TrimSpace(string(runes[:maxRunes]))
+	}
+	return normalized
 }
 
 // applyPromptTemplate는 디버그용 프롬프트 템플릿의 {{PLACEHOLDER}} 값을 실제 문자열로 치환한다.
@@ -2565,8 +2649,8 @@ func leadingRunes(text string, maxChars int) string {
 }
 
 func buildContextSummary(settings ProviderSettings, instruction, sourceChunk, translatedChunk string) string {
-	sourceTail := trailingParagraphs(sourceChunk, 320, 2)
-	translatedTail := trailingParagraphs(translatedChunk, 320, 2)
+	sourceTail := trailingParagraphs(sourceChunk, 180, 1)
+	translatedTail := trailingParagraphs(translatedChunk, 180, 1)
 	parts := make([]string, 0, 5)
 	if styleMemory := buildStyleMemorySummary(settings, instruction, sourceChunk, translatedChunk); styleMemory != "" {
 		parts = append(parts, styleMemory)
@@ -2585,13 +2669,13 @@ func buildStyleMemorySummary(settings ProviderSettings, instruction, sourceChunk
 	lines = append(lines, "Carry-forward style memory:")
 	lines = append(lines, "- User instruction remains mandatory for all remaining chunks.")
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
-		lines = append(lines, "- Active user style: "+singleLinePreview(trimmedInstruction, 220))
+		lines = append(lines, "- Active user style: "+singleLinePreview(trimmedInstruction, 140))
 	}
 	if tone := detectPostEditTone(translatedChunk, instruction); tone != "" {
 		lines = append(lines, "- Established tone/register so far: "+tone)
 	}
 	if settings.EnableEnhancedContextTranslation {
-		if lockedTerms := glossaryMemoryLines(effectiveGlossary(settings, sourceChunk), 4); len(lockedTerms) > 0 {
+		if lockedTerms := glossaryMemoryLines(effectiveGlossary(settings, sourceChunk), 3); len(lockedTerms) > 0 {
 			lines = append(lines, "- Locked terminology from glossary:")
 			for _, term := range lockedTerms {
 				lines = append(lines, "  "+term)
