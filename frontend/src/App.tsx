@@ -1200,6 +1200,7 @@ function App() {
     const reviewOverlayTimerRef = useRef<number | null>(null);
     const reviewOverlayBodyRef = useRef<HTMLDivElement>(null);
     const reviewOverlayScrollFrameRef = useRef<number | null>(null);
+    const translationScrollFrameRef = useRef<number | null>(null);
     const renderedChunksRef = useRef<RenderedChunkState[]>([]);
     const chunkAnimationTimersRef = useRef<Record<number, number[]>>({});
     const temperatureControlRef = useRef<HTMLDivElement>(null);
@@ -1241,6 +1242,10 @@ function App() {
 
     const resetTranslationPresentation = () => {
         clearChunkTimers();
+        if (translationScrollFrameRef.current !== null) {
+            window.cancelAnimationFrame(translationScrollFrameRef.current);
+            translationScrollFrameRef.current = null;
+        }
         renderedChunksRef.current = [];
         setTranslation("");
         setReviewNotes([]);
@@ -1496,6 +1501,55 @@ function App() {
         selection.removeAllRanges();
         selection.addRange(range);
         return true;
+    };
+
+    const smoothScrollTranslationToBottom = (options?: { force?: boolean }) => {
+        const container = getActiveTranslationContainer();
+        if (!container) {
+            return;
+        }
+
+        const targetTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        const distanceFromBottom = targetTop - container.scrollTop;
+        const shouldFollow = options?.force || distanceFromBottom <= 96;
+        if (!shouldFollow) {
+            return;
+        }
+
+        if (translationScrollFrameRef.current !== null) {
+            window.cancelAnimationFrame(translationScrollFrameRef.current);
+            translationScrollFrameRef.current = null;
+        }
+
+        const startTop = container.scrollTop;
+        if (Math.abs(targetTop - startTop) <= 1) {
+            container.scrollTop = targetTop;
+            return;
+        }
+
+        const duration = 220;
+        const startTime = performance.now();
+        const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+        const tick = (now: number) => {
+            const latestContainer = getActiveTranslationContainer();
+            if (!latestContainer) {
+                translationScrollFrameRef.current = null;
+                return;
+            }
+            const latestTargetTop = Math.max(0, latestContainer.scrollHeight - latestContainer.clientHeight);
+            const elapsed = now - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            const eased = easeOutCubic(progress);
+            latestContainer.scrollTop = startTop + (latestTargetTop - startTop) * eased;
+            if (progress < 1) {
+                translationScrollFrameRef.current = window.requestAnimationFrame(tick);
+            } else {
+                translationScrollFrameRef.current = null;
+            }
+        };
+
+        translationScrollFrameRef.current = window.requestAnimationFrame(tick);
     };
 
     const clearTranslationSearchHighlights = () => {
@@ -2008,9 +2062,7 @@ function App() {
         EventsOn("translation:token", (token: string) => {
             clearChunkTimers();
             setTranslation(prev => prev + token);
-            if (outputRef.current) {
-                outputRef.current.scrollTop = outputRef.current.scrollHeight;
-            }
+            smoothScrollTranslationToBottom();
         });
 
         EventsOn("translation:chunk", (payload: TranslationChunkPayload) => {
@@ -2040,9 +2092,7 @@ function App() {
                     phase: "draft",
                 });
             }
-            if (outputRef.current) {
-                outputRef.current.scrollTop = outputRef.current.scrollHeight;
-            }
+            smoothScrollTranslationToBottom();
         });
 
         EventsOn("translation:clear", () => {
@@ -2053,9 +2103,7 @@ function App() {
             clearAllDraftSkeletons();
             const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
             setTranslation(renderedChunkText || payload.text || "");
-            if (outputRef.current) {
-                outputRef.current.scrollTop = outputRef.current.scrollHeight;
-            }
+            smoothScrollTranslationToBottom({ force: true });
             setStatusMessage(formatCompletionStats(latestStatsRef.current));
             if (progressHideTimerRef.current !== null) {
                 window.clearTimeout(progressHideTimerRef.current);
@@ -2459,6 +2507,7 @@ function App() {
                             if (event === "token") {
                                 clearChunkTimers();
                                 setTranslation(prev => prev + (data?.token || ""));
+                                smoothScrollTranslationToBottom();
                                 return;
                             }
                             if (event === "chunk") {
@@ -2488,6 +2537,7 @@ function App() {
                                         phase: "draft",
                                     });
                                 }
+                                smoothScrollTranslationToBottom();
                                 return;
                             }
                             if (event === "progress") {
@@ -2502,6 +2552,7 @@ function App() {
                                 clearAllDraftSkeletons();
                                 const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
                                 setTranslation(renderedChunkText || data?.text || "");
+                                smoothScrollTranslationToBottom({ force: true });
                                 if (progressHideTimerRef.current !== null) {
                                     window.clearTimeout(progressHideTimerRef.current);
                                 }
