@@ -177,9 +177,10 @@ type TranslationCompletePayload struct {
 }
 
 type TranslationChunkPayload struct {
-	ChunkIndex int    `json:"chunk_index"`
-	Phase      string `json:"phase"`
-	Text       string `json:"text"`
+	ChunkIndex  int    `json:"chunk_index"`
+	Phase       string `json:"phase"`
+	Text        string `json:"text"`
+	FinalClosed bool   `json:"final_closed,omitempty"`
 }
 
 type TranslationProgressPayload struct {
@@ -428,9 +429,9 @@ type inlineProofreadStreamState struct {
 	finalClosed  bool
 }
 
-func (s *inlineProofreadStreamState) consume(piece string) (string, string, string) {
+func (s *inlineProofreadStreamState) consume(piece string) (string, string, string, bool) {
 	if piece == "" {
-		return "", "", ""
+		return "", "", "", false
 	}
 	s.raw.WriteString(piece)
 	parsed := extractInlineProofreadSections(s.raw.String())
@@ -448,6 +449,7 @@ func (s *inlineProofreadStreamState) consume(piece string) (string, string, stri
 	}
 
 	var nextFinal string
+	finalClosedChanged := parsed.FinalClosed && !s.finalClosed
 	if parsed.HasFinal {
 		if strings.TrimSpace(parsed.Final) != "" {
 			s.enteredFinal = true
@@ -459,7 +461,7 @@ func (s *inlineProofreadStreamState) consume(piece string) (string, string, stri
 	}
 	s.finalClosed = parsed.FinalClosed
 
-	return nextDraft, nextReview, nextFinal
+	return nextDraft, nextReview, nextFinal, finalClosedChanged
 }
 
 func (p inlineProofreadPass) apply(reqData TranslationRequest, options translationRuntimeOptions, currentChunk int, totalChunks int) (inlineProofreadResult, TranslationStatsPayload, error) {
@@ -472,13 +474,14 @@ func (p inlineProofreadPass) apply(reqData TranslationRequest, options translati
 			return
 		}
 		p.client.emitChunk(TranslationChunkPayload{
-			ChunkIndex: currentChunk - 1,
-			Phase:      phase,
-			Text:       cleanupTranslatedText(text),
+			ChunkIndex:  currentChunk - 1,
+			Phase:       phase,
+			Text:        cleanupTranslatedText(text),
+			FinalClosed: phase == "final" && streamState.finalClosed,
 		})
 	}
 	handlePiece := func(piece string) {
-		draft, review, final := streamState.consume(piece)
+		draft, review, final, finalClosedChanged := streamState.consume(piece)
 		if draft != "" && !streamState.enteredFinal {
 			emitChunkUpdate("draft", draft)
 		}
@@ -487,6 +490,13 @@ func (p inlineProofreadPass) apply(reqData TranslationRequest, options translati
 		}
 		if final != "" {
 			emitChunkUpdate("final", final)
+		} else if finalClosedChanged {
+			p.client.emitChunk(TranslationChunkPayload{
+				ChunkIndex:  currentChunk - 1,
+				Phase:       "final",
+				Text:        cleanupTranslatedText(streamState.lastFinal),
+				FinalClosed: true,
+			})
 		}
 	}
 

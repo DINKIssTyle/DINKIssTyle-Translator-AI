@@ -1094,6 +1094,48 @@ textarea {
   line-height: 1.7;
 }
 
+.translation-stream-layered {
+  display: flex;
+  flex-direction: column;
+  gap: 1.7em;
+}
+
+.translation-stream-chunk {
+  position: relative;
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.translation-stream-chunk.has-skeleton {
+  min-height: 1.7em;
+}
+
+.translation-stream-draft,
+.translation-stream-final {
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.translation-stream-draft {
+  color: transparent;
+  border-radius: 10px;
+  background-color: rgba(148, 163, 184, 0.22);
+  -webkit-background-clip: text;
+  background-clip: text;
+  transition: opacity 3000ms ease;
+}
+
+.translation-stream-draft.is-hiding {
+  opacity: 0;
+}
+
+.translation-stream-final.is-overlaying {
+  position: absolute;
+  inset: 0;
+}
+
 .translation-search-highlight {
   padding: 0.04em 0.18em;
   border-radius: 0.38em;

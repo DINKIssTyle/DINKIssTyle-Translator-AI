@@ -37,6 +37,7 @@ type TranslationChunkPayload = {
     chunk_index?: number;
     phase?: string;
     text?: string;
+    final_closed?: boolean;
 };
 
 type ReviewOverlayState = {
@@ -132,6 +133,8 @@ type RenderedChunkState = {
     draftText: string;
     finalText: string;
     phase: "draft" | "final";
+    showDraftSkeleton?: boolean;
+    skeletonHiding?: boolean;
 };
 
 type WebTranslateResponse = {
@@ -158,6 +161,7 @@ const SOURCE_LANGUAGES = ["auto", "English", "Korean", "Japanese", "Chinese", "F
 const TARGET_LANGUAGES = ["Korean", "English", "Japanese", "Chinese", "French", "German"];
 const DEFAULT_REASONING_OPTIONS = ["off", "low", "medium", "high", "on"];
 const DEFAULT_EDITOR_FONT_SIZE = 18;
+const DRAFT_SKELETON_FADE_MS = 3000;
 const MIN_EDITOR_FONT_SIZE = 14;
 const MAX_EDITOR_FONT_SIZE = 26;
 const DEFAULT_REASONING = "off";
@@ -474,16 +478,6 @@ function joinRenderedChunks(chunks: RenderedChunkState[]): string {
         combined += chunk.displayedText;
     }
     return combined;
-}
-
-function mergeDraftAndFinalForDisplay(draftText: string, finalText: string): string {
-    if (!finalText) {
-        return draftText;
-    }
-    if (!draftText) {
-        return finalText;
-    }
-    return finalText;
 }
 
 function createGlossaryRow(source = "", target = "", frequency?: number): GlossaryRow {
@@ -1060,6 +1054,7 @@ function App() {
     const [lastTranslationPromptPreview, setLastTranslationPromptPreview] = useState("");
     const [lastTopicAwareHintsPreview, setLastTopicAwareHintsPreview] = useState("");
     const [reviewOverlay, setReviewOverlay] = useState<ReviewOverlayState>({ visible: false, hiding: false, text: "" });
+    const [chunkPresentationVersion, setChunkPresentationVersion] = useState(0);
 
     const outputRef = useRef<HTMLDivElement>(null);
     const translationViewerRef = useRef<HTMLDivElement>(null);
@@ -1106,10 +1101,15 @@ function App() {
         setTranslation(joinRenderedChunks(renderedChunksRef.current));
     };
 
+    const refreshChunkPresentation = () => {
+        setChunkPresentationVersion(prev => prev + 1);
+    };
+
     const resetTranslationPresentation = () => {
         clearChunkTimers();
         renderedChunksRef.current = [];
         setTranslation("");
+        refreshChunkPresentation();
         if (reviewOverlayTimerRef.current !== null) {
             window.clearTimeout(reviewOverlayTimerRef.current);
             reviewOverlayTimerRef.current = null;
@@ -1147,6 +1147,7 @@ function App() {
         nextChunks[chunkIndex] = nextChunk;
         renderedChunksRef.current = nextChunks;
         syncTranslationFromChunks();
+        refreshChunkPresentation();
     };
 
     const streamChunkToFinal = (chunkIndex: number, finalText: string) => {
@@ -1155,15 +1156,51 @@ function App() {
             draftText: "",
             finalText: "",
             phase: "draft" as const,
+            showDraftSkeleton: false,
+            skeletonHiding: false,
         };
         clearChunkTimers(chunkIndex);
-        const mergedDisplay = mergeDraftAndFinalForDisplay(current.draftText, finalText);
         setRenderedChunk(chunkIndex, {
             ...current,
-            displayedText: mergedDisplay,
+            displayedText: finalText,
             finalText,
             phase: "final",
+            showDraftSkeleton: Boolean(current.draftText),
+            skeletonHiding: false,
         });
+    };
+
+    const fadeOutDraftSkeleton = (chunkIndex: number) => {
+        const current = renderedChunksRef.current[chunkIndex];
+        if (!current?.showDraftSkeleton || current.skeletonHiding) {
+            return;
+        }
+
+        clearChunkTimers(chunkIndex);
+        const nextChunks = [...renderedChunksRef.current];
+        nextChunks[chunkIndex] = {
+            ...current,
+            skeletonHiding: true,
+        };
+        renderedChunksRef.current = nextChunks;
+        refreshChunkPresentation();
+
+        const timer = window.setTimeout(() => {
+            const latest = renderedChunksRef.current[chunkIndex];
+            if (!latest) {
+                return;
+            }
+            const updatedChunks = [...renderedChunksRef.current];
+            updatedChunks[chunkIndex] = {
+                ...latest,
+                showDraftSkeleton: false,
+                skeletonHiding: false,
+            };
+            renderedChunksRef.current = updatedChunks;
+            refreshChunkPresentation();
+            clearChunkTimers(chunkIndex);
+        }, DRAFT_SKELETON_FADE_MS);
+        chunkAnimationTimersRef.current[chunkIndex] = [timer];
     };
     const temperatureLabel = formatTemperatureLabel(providerSettings.temperature);
     const selectedInstructionPreset = findMatchingInstructionPreset(instruction);
@@ -1183,6 +1220,8 @@ function App() {
     const progressRingCaption = usesStageRing
         ? (progressState.stage === "model_load" ? "Model" : "Prompt")
         : "Overall";
+    const renderedChunks = renderedChunksRef.current;
+    const shouldRenderLayeredChunks = renderedChunks.some(chunk => chunk && (chunk.showDraftSkeleton || chunk.phase === "final"));
 
     const showSavedToastMessage = (message: string) => {
         setShowSavedToast(false);
@@ -1661,11 +1700,16 @@ function App() {
                 draftText: "",
                 finalText: "",
                 phase: "draft" as const,
+                showDraftSkeleton: false,
+                skeletonHiding: false,
             };
             if ((payload.phase || "").toLowerCase() === "review") {
                 showReviewOverlay(nextText);
             } else if ((payload.phase || "").toLowerCase() === "final") {
                 streamChunkToFinal(chunkIndex, nextText);
+                if (payload.final_closed) {
+                    fadeOutDraftSkeleton(chunkIndex);
+                }
             } else {
                 setRenderedChunk(chunkIndex, {
                     ...current,
@@ -2089,11 +2133,16 @@ function App() {
                                     draftText: "",
                                     finalText: "",
                                     phase: "draft" as const,
+                                    showDraftSkeleton: false,
+                                    skeletonHiding: false,
                                 };
                                 if ((data?.phase || "").toLowerCase() === "review") {
                                     showReviewOverlay(nextText);
                                 } else if ((data?.phase || "").toLowerCase() === "final") {
                                     streamChunkToFinal(chunkIndex, nextText);
+                                    if (data?.final_closed) {
+                                        fadeOutDraftSkeleton(chunkIndex);
+                                    }
                                 } else {
                                     setRenderedChunk(chunkIndex, {
                                         ...current,
@@ -3040,8 +3089,40 @@ function App() {
                         </div>
                         <div className="pane-body">
                             <div className="translation-output markdown-output" ref={outputRef} style={{ fontSize: `${editorFontSize}px` }}>
-                                {renderMarkdown(translation)}
-                                {isTranslating && <span className="cursor">|</span>}
+                                {shouldRenderLayeredChunks ? (
+                                    <div className="translation-stream-layered" data-version={chunkPresentationVersion}>
+                                        {renderedChunks.map((chunk, index) => {
+                                            if (!chunk || (!chunk.displayedText && !chunk.draftText)) {
+                                                return null;
+                                            }
+                                            const showSkeleton = Boolean(chunk.showDraftSkeleton && chunk.draftText);
+                                            return (
+                                                <div
+                                                    key={`chunk-${index}`}
+                                                    className={`translation-stream-chunk ${showSkeleton ? "has-skeleton" : ""}`}
+                                                >
+                                                    {showSkeleton && (
+                                                        <div
+                                                            className={`translation-stream-draft ${chunk.skeletonHiding ? "is-hiding" : ""}`}
+                                                            aria-hidden="true"
+                                                        >
+                                                            {chunk.draftText}
+                                                        </div>
+                                                    )}
+                                                    <div className={`translation-stream-final ${showSkeleton ? "is-overlaying" : ""}`}>
+                                                        {chunk.displayedText}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {isTranslating && <span className="cursor">|</span>}
+                                    </div>
+                                ) : (
+                                    <>
+                                        {renderMarkdown(translation)}
+                                        {isTranslating && <span className="cursor">|</span>}
+                                    </>
+                                )}
                             </div>
                             {translationSearchQuery && translationSearchMatchCount > 0 && (
                                 <div className="translation-search-nav" role="status" aria-live="polite">
