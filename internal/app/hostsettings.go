@@ -13,16 +13,19 @@ const hostProviderSettingsFileName = "provider-settings.json"
 
 func defaultHostProviderSettings() llm.ProviderSettings {
 	return llm.ProviderSettings{
-		Mode:                     "lmstudio",
-		Endpoint:                 "http://127.0.0.1:1234",
-		APIKey:                   "",
-		Model:                    "",
-		Reasoning:                "off",
-		ForceShowTemperature:     true,
-		EnablePostEdit:           true,
-		EnableTopicAwarePostEdit: true,
-		EnableSmartChunking:      true,
-		SmartChunkSize:           2000,
+		Mode:                             "lmstudio",
+		Endpoint:                         "http://127.0.0.1:1234",
+		APIKey:                           "",
+		Model:                            "",
+		Reasoning:                        "",
+		Temperature:                      0,
+		ForceShowReasoning:               true,
+		ForceShowTemperature:             true,
+		EnablePostEdit:                   true,
+		EnableTopicAwarePostEdit:         true,
+		EnableEnhancedContextTranslation: false,
+		EnableSmartChunking:              true,
+		SmartChunkSize:                   1000,
 	}
 }
 
@@ -46,7 +49,7 @@ func loadPersistedHostProviderSettings() llm.ProviderSettings {
 		settings.Endpoint = "http://127.0.0.1:1234"
 	}
 	if settings.SmartChunkSize <= 0 {
-		settings.SmartChunkSize = 2000
+		settings.SmartChunkSize = 1000
 	}
 	return settings
 }

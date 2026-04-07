@@ -164,8 +164,8 @@ const DEFAULT_EDITOR_FONT_SIZE = 18;
 const DRAFT_SKELETON_FADE_MS = 3000;
 const MIN_EDITOR_FONT_SIZE = 14;
 const MAX_EDITOR_FONT_SIZE = 26;
-const DEFAULT_REASONING = "off";
-const DEFAULT_TEMPERATURE = 0.4;
+const DEFAULT_REASONING = "";
+const DEFAULT_TEMPERATURE = 0;
 const MIN_TEMPERATURE = 0;
 const GLOSSARY_STOPWORDS = new Set([
     "the", "and", "that", "with", "from", "this", "have", "were", "their", "there", "into", "they",
@@ -986,7 +986,7 @@ function App() {
         apiKey: storedSettings?.apiKey || "",
         model: storedSettings?.selectedModel || "",
         reasoning: storedSettings?.reasoning ?? DEFAULT_REASONING,
-        forceShowReasoning: storedSettings?.forceShowReasoning ?? false,
+        forceShowReasoning: storedSettings?.forceShowReasoning ?? true,
         temperature: clampTemperature(storedSettings?.temperature ?? DEFAULT_TEMPERATURE),
         forceShowTemperature: storedSettings?.forceShowTemperature ?? true,
         enablePostEdit: storedSettings?.enablePostEdit ?? true,
@@ -994,7 +994,7 @@ function App() {
         enableEnhancedContextTranslation: storedSettings?.enableEnhancedContextTranslation ?? false,
         enhancedContextGlossary: storedSettings?.enhancedContextGlossary || "",
         enableSmartChunking: storedSettings?.enableSmartChunking ?? true,
-        smartChunkSize: storedSettings?.smartChunkSize || 2000,
+        smartChunkSize: storedSettings?.smartChunkSize || 1000,
     });
     const [sourceLang, setSourceLang] = useState(storedSettings?.sourceLang || "auto");
     const [targetLang, setTargetLang] = useState(storedSettings?.targetLang || "Korean");
@@ -1019,7 +1019,7 @@ function App() {
     const [showSavedToast, setShowSavedToast] = useState(false);
     const [savedToastMessage, setSavedToastMessage] = useState("Settings saved");
     const [editorFontSize, setEditorFontSize] = useState<number>(clampFontSize(storedSettings?.editorFontSize || DEFAULT_EDITOR_FONT_SIZE));
-    const [smartChunkSizeDraft, setSmartChunkSizeDraft] = useState(String(storedSettings?.smartChunkSize || 2000));
+    const [smartChunkSizeDraft, setSmartChunkSizeDraft] = useState(String(storedSettings?.smartChunkSize || 1000));
     const [showTemperatureSlider, setShowTemperatureSlider] = useState(false);
     const [showStatusSummary, setShowStatusSummary] = useState(false);
     const [suppressPromptTooltips, setSuppressPromptTooltips] = useState(false);
