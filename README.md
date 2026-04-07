@@ -5,7 +5,7 @@
 Professional local LLM translation workspace designed for consistent style and context preservation.
 
 Main Screen
-![Main Screen](res/1.gif)
+![Main Screen](res/1v2.gif)
 
 <!-- Web Login
 <img src="res/web_login.png" alt="Web Login" width="250"> -->
