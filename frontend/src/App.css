@@ -1513,10 +1513,15 @@ textarea {
 .progress-review-body {
   max-height: min(28vh, 220px);
   overflow: auto;
+  scrollbar-width: none;
   white-space: pre-wrap;
   line-height: 1.6;
   color: var(--text-main);
   font-size: 0.9rem;
+}
+
+.progress-review-body::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes progress-review-enter {

@@ -1068,6 +1068,8 @@ function App() {
     const browserTranslateAbortRef = useRef<AbortController | null>(null);
     const translationRunIdRef = useRef(0);
     const reviewOverlayTimerRef = useRef<number | null>(null);
+    const reviewOverlayBodyRef = useRef<HTMLDivElement>(null);
+    const reviewOverlayScrollFrameRef = useRef<number | null>(null);
     const renderedChunksRef = useRef<RenderedChunkState[]>([]);
     const chunkAnimationTimersRef = useRef<Record<number, number[]>>({});
     const temperatureControlRef = useRef<HTMLDivElement>(null);
@@ -1612,6 +1614,56 @@ function App() {
         mediaQuery.addListener(handleChange);
         return () => mediaQuery.removeListener(handleChange);
     }, []);
+
+    useEffect(() => {
+        if (!reviewOverlay.visible) {
+            return;
+        }
+        const panel = reviewOverlayBodyRef.current;
+        if (!panel) {
+            return;
+        }
+        const animateScrollToBottom = () => {
+            if (panel.scrollHeight <= panel.clientHeight + 4) {
+                return;
+            }
+            const startTop = panel.scrollTop;
+            const targetTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+            if (targetTop <= startTop + 1) {
+                return;
+            }
+            if (reviewOverlayScrollFrameRef.current !== null) {
+                window.cancelAnimationFrame(reviewOverlayScrollFrameRef.current);
+                reviewOverlayScrollFrameRef.current = null;
+            }
+
+            const duration = 260;
+            const startTime = performance.now();
+            const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+            const tick = (now: number) => {
+                const elapsed = now - startTime;
+                const progress = Math.min(1, elapsed / duration);
+                const eased = easeOutCubic(progress);
+                panel.scrollTop = startTop + (targetTop - startTop) * eased;
+                if (progress < 1) {
+                    reviewOverlayScrollFrameRef.current = window.requestAnimationFrame(tick);
+                } else {
+                    reviewOverlayScrollFrameRef.current = null;
+                }
+            };
+
+            reviewOverlayScrollFrameRef.current = window.requestAnimationFrame(tick);
+        };
+        const frame = window.requestAnimationFrame(animateScrollToBottom);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            if (reviewOverlayScrollFrameRef.current !== null) {
+                window.cancelAnimationFrame(reviewOverlayScrollFrameRef.current);
+                reviewOverlayScrollFrameRef.current = null;
+            }
+        };
+    }, [reviewOverlay.visible, reviewOverlay.text]);
 
     useEffect(() => {
         if (isBrowserMode) {
@@ -3940,7 +3992,7 @@ function App() {
                     {reviewOverlay.visible && (
                         <div className={`progress-review-panel ${reviewOverlay.hiding ? "is-hiding" : ""}`} role="status" aria-live="polite">
                             <div className="progress-review-title">Review Notes</div>
-                            <div className="progress-review-body markdown-output">{renderMarkdown(formatReviewOverlayText(reviewOverlay.text))}</div>
+                            <div className="progress-review-body markdown-output" ref={reviewOverlayBodyRef}>{renderMarkdown(formatReviewOverlayText(reviewOverlay.text))}</div>
                         </div>
                     )}
                 </div>
