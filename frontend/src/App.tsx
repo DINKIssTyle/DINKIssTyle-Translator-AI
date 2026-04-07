@@ -1357,6 +1357,28 @@ function App() {
         }, DRAFT_SKELETON_FADE_MS);
         chunkAnimationTimersRef.current[chunkIndex] = [timer];
     };
+
+    const clearAllDraftSkeletons = () => {
+        clearChunkTimers();
+        let changed = false;
+        const nextChunks = renderedChunksRef.current.map(chunk => {
+            if (!chunk || (!chunk.showDraftSkeleton && !chunk.skeletonHiding)) {
+                return chunk;
+            }
+            changed = true;
+            return {
+                ...chunk,
+                showDraftSkeleton: false,
+                skeletonHiding: false,
+            };
+        });
+        if (!changed) {
+            return;
+        }
+        renderedChunksRef.current = nextChunks;
+        syncTranslationFromChunks();
+        refreshChunkPresentation();
+    };
     const temperatureLabel = formatTemperatureLabel(providerSettings.temperature);
     const selectedInstructionPreset = findMatchingInstructionPreset(instruction);
     const instructionPresetValue = selectedInstructionPreset?.id || "custom";
@@ -2028,6 +2050,7 @@ function App() {
         });
 
         EventsOn("translation:complete", (payload: TranslationCompletePayload) => {
+            clearAllDraftSkeletons();
             const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
             setTranslation(renderedChunkText || payload.text || "");
             if (outputRef.current) {
@@ -2476,6 +2499,7 @@ function App() {
                                 return;
                             }
                             if (event === "complete") {
+                                clearAllDraftSkeletons();
                                 const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
                                 setTranslation(renderedChunkText || data?.text || "");
                                 if (progressHideTimerRef.current !== null) {
@@ -2904,8 +2928,10 @@ function App() {
         if (!cleanedTranslation) {
             return;
         }
+        const selectedText = window.getSelection?.()?.toString() || "";
+        const nextText = selectedText.trim() ? selectedText : cleanedTranslation;
         event.preventDefault();
-        event.clipboardData.setData("text/plain", cleanedTranslation);
+        event.clipboardData.setData("text/plain", nextText);
     };
 
     const handleOpenDebugStudioWindow = () => {

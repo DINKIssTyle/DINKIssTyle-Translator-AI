@@ -1092,6 +1092,7 @@ textarea {
 .translation-output {
   overflow-y: auto;
   line-height: 1.7;
+  --translation-output-bg: rgba(255, 255, 255, 0.86);
 }
 
 .translation-stream-layered {
@@ -1102,12 +1103,16 @@ textarea {
 
 .translation-stream-chunk {
   position: relative;
+  isolation: isolate;
   white-space: pre-wrap;
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
 
+/* has-skeleton 상태: draft + final을 같은 grid-area에 쌓아
+   셀 높이를 자동으로 두 레이어 중 더 큰 쪽에 맞춤 → overflow/겹침 방지 */
 .translation-stream-chunk.has-skeleton {
+  display: grid;
   min-height: 1.7em;
 }
 
@@ -1116,9 +1121,13 @@ textarea {
   white-space: pre-wrap;
   word-break: keep-all;
   overflow-wrap: anywhere;
+  line-height: inherit;
+  font-size: inherit;
 }
 
+/* 같은 grid 셀(1/1)에 배치 — position:absolute 없이 동일 기준점에서 시작 */
 .translation-stream-draft {
+  grid-area: 1 / 1;
   color: transparent;
   border-radius: 10px;
   background-color: rgba(148, 163, 184, 0.22);
@@ -1134,9 +1143,9 @@ textarea {
   opacity: 0;
 }
 
+/* final도 같은 grid 셀에 — draft 위에 자연스럽게 겹쳐 렌더링됨 */
 .translation-stream-final.is-overlaying {
-  position: absolute;
-  inset: 0;
+  grid-area: 1 / 1;
 }
 
 .translation-search-highlight {
