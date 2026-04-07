@@ -33,6 +33,18 @@ type TranslationCompletePayload = {
     text?: string;
 };
 
+type TranslationChunkPayload = {
+    chunk_index?: number;
+    phase?: string;
+    text?: string;
+};
+
+type ReviewOverlayState = {
+    visible: boolean;
+    hiding: boolean;
+    text: string;
+};
+
 type ProgressPayload = {
     stage?: string;
     label?: string;
@@ -74,7 +86,6 @@ type ProviderSettings = {
     enableSmartChunking: boolean;
     smartChunkSize: number;
     debugTranslationPromptTemplate?: string;
-    debugPostEditPromptTemplate?: string;
 };
 
 type ModelInfo = {
@@ -89,9 +100,7 @@ type DebugStudioSnapshot = {
     debugRequest: string;
     debugResponse: string;
     debugTranslationPromptTemplate: string;
-    debugPostEditPromptTemplate: string;
     lastTranslationPromptPreview: string;
-    lastPostEditPromptPreview: string;
     lastTopicAwareHintsPreview: string;
 };
 
@@ -116,6 +125,13 @@ type WebServerSettingsInput = {
     certDomain: string;
     certPath?: string;
     keyPath?: string;
+};
+
+type RenderedChunkState = {
+    displayedText: string;
+    draftText: string;
+    finalText: string;
+    phase: "draft" | "final";
 };
 
 type WebTranslateResponse = {
@@ -262,47 +278,6 @@ Produce only the {{TARGET_LANG}} translation.
 
 Source text:
 {{SOURCE_TEXT}}`;
-
-const DEBUG_POST_EDIT_PROMPT_TEMPLATE = `You are a professional {{SOURCE_LANG}} to {{TARGET_LANG}} translation post-editor.
-
-Style instruction:
-{{INSTRUCTION}}
-
-Protected names and terms:
-{{PROTECTED_TERMS}}
-
-User glossary:
-{{GLOSSARY}}
-
-Chunk label:
-{{CHUNK_LABEL}}
-
-Previous context:
-{{CONTEXT_SUMMARY}}
-
-Opening source paragraph:
-{{OPENING_SOURCE_PARAGRAPH}}
-
-Opening translated paragraph:
-{{OPENING_TRANSLATED_PARAGRAPH}}
-
-Recent overlap:
-{{OVERLAP_CONTEXT}}
-
-Topic-aware smart post-editing hint:
-{{TOPIC_AWARE_HINTS}}
-
-Rules:
-- Fix awkward wording, broken transliterations, malformed loanwords, and obvious mistranslations.
-- Remove mixed-language fragments, stray foreign-script insertions, and leftover untranslated words when they break the sentence.
-- Preserve intentional bilingual notation only when clearly marked.
-- Output only the final corrected translation.
-
-Source text:
-{{SOURCE_TEXT}}
-
-Translated draft:
-{{DRAFT_TRANSLATION}}`;
 
 // 프리셋 지침 끝-
 
@@ -473,10 +448,42 @@ function deriveOverallProgress(step?: number, total?: number, isDone?: boolean):
 
 function sanitizeTranslation(raw: string): string {
     return raw
+        .replace(/\\r\\n/g, "\n")
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\n")
+        .replace(/\\t/g, "\t")
         .replace(/^\s*<<<\s*output\s*>>>\s*/i, "")
         .replace(/<<<\s*\/?output\s*>>>/gi, "")
         .replace(/<<<[^>\n]+>>>/g, "")
         .trim();
+}
+
+function formatReviewOverlayText(text: string): string {
+    return text.replace(/->/g, "→");
+}
+
+function joinRenderedChunks(chunks: RenderedChunkState[]): string {
+    let combined = "";
+    for (const chunk of chunks) {
+        if (!chunk || !chunk.displayedText) {
+            continue;
+        }
+        if (combined && !combined.endsWith("\n") && !chunk.displayedText.startsWith("\n")) {
+            combined += "\n\n";
+        }
+        combined += chunk.displayedText;
+    }
+    return combined;
+}
+
+function mergeDraftAndFinalForDisplay(draftText: string, finalText: string): string {
+    if (!finalText) {
+        return draftText;
+    }
+    if (!draftText) {
+        return finalText;
+    }
+    return finalText;
 }
 
 function createGlossaryRow(source = "", target = "", frequency?: number): GlossaryRow {
@@ -486,6 +493,27 @@ function createGlossaryRow(source = "", target = "", frequency?: number): Glossa
         target,
         frequency,
     };
+}
+
+function compareGlossarySource(a: GlossaryRow, b: GlossaryRow): number {
+    const sourceCompare = a.source.trim().localeCompare(b.source.trim(), undefined, {
+        sensitivity: "base",
+        numeric: true,
+    });
+    if (sourceCompare !== 0) {
+        return sourceCompare;
+    }
+    return a.target.trim().localeCompare(b.target.trim(), undefined, {
+        sensitivity: "base",
+        numeric: true,
+    });
+}
+
+function normalizeUserGlossaryRows(rows: GlossaryRow[]): GlossaryRow[] {
+    const filledRows = rows
+        .filter(row => row.source.trim() || row.target.trim())
+        .sort(compareGlossarySource);
+    return [...filledRows, createGlossaryRow()];
 }
 
 function parseGlossaryText(text: string): Array<{ source: string; target: string }> {
@@ -509,7 +537,8 @@ function parseGlossaryText(text: string): Array<{ source: string; target: string
 }
 
 function serializeGlossaryRows(rows: GlossaryRow[]): string {
-    return rows
+    return [...rows]
+        .sort(compareGlossarySource)
         .map(row => `${row.source.trim()} = ${row.target.trim()}`)
         .filter(line => line !== "=" && !line.startsWith(" =") && !line.endsWith("= "))
         .join("\n");
@@ -652,7 +681,7 @@ function buildGlossaryDraftState(glossaryText: string, sourceText: string): { us
         .map(entry => createGlossaryRow(entry.source, entry.target));
 
     return {
-        userRows: userRows.length > 0 ? userRows : [createGlossaryRow()],
+        userRows: normalizeUserGlossaryRows(userRows),
         extractedRows,
     };
 }
@@ -836,12 +865,9 @@ function DebugStudioWindow(props: {
     debugRequest: string;
     debugResponse: string;
     debugTranslationPromptTemplate: string;
-    debugPostEditPromptTemplate: string;
     lastTranslationPromptPreview: string;
-    lastPostEditPromptPreview: string;
     lastTopicAwareHintsPreview: string;
     setDebugTranslationPromptTemplate: React.Dispatch<React.SetStateAction<string>>;
-    setDebugPostEditPromptTemplate: React.Dispatch<React.SetStateAction<string>>;
     setDebugRequest: React.Dispatch<React.SetStateAction<string>>;
     setDebugResponse: React.Dispatch<React.SetStateAction<string>>;
 }) {
@@ -850,26 +876,18 @@ function DebugStudioWindow(props: {
         debugRequest,
         debugResponse,
         debugTranslationPromptTemplate,
-        debugPostEditPromptTemplate,
         lastTranslationPromptPreview,
-        lastPostEditPromptPreview,
         lastTopicAwareHintsPreview,
         setDebugTranslationPromptTemplate,
-        setDebugPostEditPromptTemplate,
         setDebugRequest,
         setDebugResponse,
     } = props;
     const [translationPromptDraft, setTranslationPromptDraft] = useState(debugTranslationPromptTemplate);
-    const [postEditPromptDraft, setPostEditPromptDraft] = useState(debugPostEditPromptTemplate);
     const [applyToast, setApplyToast] = useState("");
 
     useEffect(() => {
         setTranslationPromptDraft(debugTranslationPromptTemplate);
     }, [debugTranslationPromptTemplate]);
-
-    useEffect(() => {
-        setPostEditPromptDraft(debugPostEditPromptTemplate);
-    }, [debugPostEditPromptTemplate]);
 
     useEffect(() => {
         if (!applyToast) {
@@ -895,7 +913,6 @@ function DebugStudioWindow(props: {
                     </button>
                     <button className="btn btn-secondary btn-small" onClick={() => {
                         setDebugTranslationPromptTemplate(DEBUG_TRANSLATION_PROMPT_TEMPLATE);
-                        setDebugPostEditPromptTemplate(DEBUG_POST_EDIT_PROMPT_TEMPLATE);
                     }}>
                         Reset Overrides
                     </button>
@@ -910,10 +927,6 @@ function DebugStudioWindow(props: {
                 <div className="debug-card debug-card-translation-prompt">
                     <div className="debug-title">Last Translation Prompt</div>
                     <pre className="debug-pre-xxl debug-preview-pre">{lastTranslationPromptPreview || "No translation prompt rendered yet."}</pre>
-                </div>
-                <div className="debug-card debug-card-postedit-prompt">
-                    <div className="debug-title">Last Post-Edit Prompt</div>
-                    <pre className="debug-pre-xxl debug-preview-pre">{lastPostEditPromptPreview || "No post-edit prompt rendered yet."}</pre>
                 </div>
                 <div className="debug-card debug-card-full debug-card-topic-hints">
                     <div className="debug-title">Last Topic-Aware Hints</div>
@@ -948,37 +961,6 @@ function DebugStudioWindow(props: {
                         value={translationPromptDraft}
                         onChange={e => setTranslationPromptDraft(e.target.value)}
                         placeholder="Load the current rendered prompt, tweak it, and the edited text will be used as-is for debug translations."
-                    />
-                </div>
-                <div className="debug-card debug-card-postedit-override">
-                    <div className="debug-card-header">
-                        <div className="debug-title">Post-Edit Prompt Override</div>
-                        <div className="debug-card-actions">
-                            <button
-                                className="btn btn-secondary btn-small"
-                                type="button"
-                                onClick={() => setPostEditPromptDraft(lastPostEditPromptPreview || DEBUG_POST_EDIT_PROMPT_TEMPLATE)}
-                            >
-                                Load Current Prompt
-                            </button>
-                            <button
-                                className="icon-btn"
-                                type="button"
-                                onClick={() => {
-                                    setDebugPostEditPromptTemplate(postEditPromptDraft);
-                                    setApplyToast("Post-edit prompt override applied");
-                                }}
-                                title="Apply Post-Edit Prompt Override"
-                            >
-                                <span className="material-symbols-outlined">save</span>
-                            </button>
-                        </div>
-                    </div>
-                    <textarea
-                        className="settings-textarea debug-prompt-textarea debug-prompt-textarea-wide"
-                        value={postEditPromptDraft}
-                        onChange={e => setPostEditPromptDraft(e.target.value)}
-                        placeholder="Load the current rendered post-edit prompt, fine-tune its wording, and apply it only while debugging."
                     />
                 </div>
                 <div className="debug-card debug-card-request-log">
@@ -1043,6 +1025,7 @@ function App() {
     const [showSavedToast, setShowSavedToast] = useState(false);
     const [savedToastMessage, setSavedToastMessage] = useState("Settings saved");
     const [editorFontSize, setEditorFontSize] = useState<number>(clampFontSize(storedSettings?.editorFontSize || DEFAULT_EDITOR_FONT_SIZE));
+    const [smartChunkSizeDraft, setSmartChunkSizeDraft] = useState(String(storedSettings?.smartChunkSize || 2000));
     const [showTemperatureSlider, setShowTemperatureSlider] = useState(false);
     const [showStatusSummary, setShowStatusSummary] = useState(false);
     const [suppressPromptTooltips, setSuppressPromptTooltips] = useState(false);
@@ -1074,10 +1057,9 @@ function App() {
     });
     const [animatedProgressValue, setAnimatedProgressValue] = useState(0);
     const [debugTranslationPromptTemplate, setDebugTranslationPromptTemplate] = useState("");
-    const [debugPostEditPromptTemplate, setDebugPostEditPromptTemplate] = useState("");
     const [lastTranslationPromptPreview, setLastTranslationPromptPreview] = useState("");
-    const [lastPostEditPromptPreview, setLastPostEditPromptPreview] = useState("");
     const [lastTopicAwareHintsPreview, setLastTopicAwareHintsPreview] = useState("");
+    const [reviewOverlay, setReviewOverlay] = useState<ReviewOverlayState>({ visible: false, hiding: false, text: "" });
 
     const outputRef = useRef<HTMLDivElement>(null);
     const translationViewerRef = useRef<HTMLDivElement>(null);
@@ -1090,6 +1072,9 @@ function App() {
     const latestStatsRef = useRef<TranslationStatsPayload | null>(null);
     const browserTranslateAbortRef = useRef<AbortController | null>(null);
     const translationRunIdRef = useRef(0);
+    const reviewOverlayTimerRef = useRef<number | null>(null);
+    const renderedChunksRef = useRef<RenderedChunkState[]>([]);
+    const chunkAnimationTimersRef = useRef<Record<number, number[]>>({});
     const temperatureControlRef = useRef<HTMLDivElement>(null);
     const modelPopoverRef = useRef<HTMLDivElement>(null);
     const debugSnapshotRef = useRef("");
@@ -1103,6 +1088,83 @@ function App() {
     const enhancedContextDraftGlossary = buildCombinedGlossary(enhancedContextUserRows, enhancedContextExtractedRows);
     const sourceStats = getTextStats(sourceText);
     const translationStats = getTextStats(cleanedTranslation);
+
+    const clearChunkTimers = (chunkIndex?: number) => {
+        if (typeof chunkIndex === "number") {
+            const timers = chunkAnimationTimersRef.current[chunkIndex] || [];
+            timers.forEach(timer => window.clearTimeout(timer));
+            delete chunkAnimationTimersRef.current[chunkIndex];
+            return;
+        }
+        Object.values(chunkAnimationTimersRef.current).forEach(timers => {
+            timers.forEach(timer => window.clearTimeout(timer));
+        });
+        chunkAnimationTimersRef.current = {};
+    };
+
+    const syncTranslationFromChunks = () => {
+        setTranslation(joinRenderedChunks(renderedChunksRef.current));
+    };
+
+    const resetTranslationPresentation = () => {
+        clearChunkTimers();
+        renderedChunksRef.current = [];
+        setTranslation("");
+        if (reviewOverlayTimerRef.current !== null) {
+            window.clearTimeout(reviewOverlayTimerRef.current);
+            reviewOverlayTimerRef.current = null;
+        }
+        setReviewOverlay({ visible: false, hiding: false, text: "" });
+    };
+
+    const showReviewOverlay = (text: string) => {
+        if (!text.trim()) {
+            return;
+        }
+        setReviewOverlay({ visible: true, hiding: false, text });
+        if (reviewOverlayTimerRef.current !== null) {
+            window.clearTimeout(reviewOverlayTimerRef.current);
+        }
+        reviewOverlayTimerRef.current = window.setTimeout(() => {
+            setReviewOverlay(prev => ({ ...prev, hiding: true }));
+            reviewOverlayTimerRef.current = window.setTimeout(() => {
+                setReviewOverlay({ visible: false, hiding: false, text: "" });
+                reviewOverlayTimerRef.current = null;
+            }, 180);
+        }, 2200);
+    };
+
+    const setRenderedChunk = (chunkIndex: number, nextChunk: RenderedChunkState) => {
+        const nextChunks = [...renderedChunksRef.current];
+        while (nextChunks.length <= chunkIndex) {
+            nextChunks.push({
+                displayedText: "",
+                draftText: "",
+                finalText: "",
+                phase: "draft",
+            });
+        }
+        nextChunks[chunkIndex] = nextChunk;
+        renderedChunksRef.current = nextChunks;
+        syncTranslationFromChunks();
+    };
+
+    const streamChunkToFinal = (chunkIndex: number, finalText: string) => {
+        const current = renderedChunksRef.current[chunkIndex] || {
+            displayedText: "",
+            draftText: "",
+            finalText: "",
+            phase: "draft" as const,
+        };
+        clearChunkTimers(chunkIndex);
+        const mergedDisplay = mergeDraftAndFinalForDisplay(current.draftText, finalText);
+        setRenderedChunk(chunkIndex, {
+            ...current,
+            displayedText: mergedDisplay,
+            finalText,
+            phase: "final",
+        });
+    };
     const temperatureLabel = formatTemperatureLabel(providerSettings.temperature);
     const selectedInstructionPreset = findMatchingInstructionPreset(instruction);
     const instructionPresetValue = selectedInstructionPreset?.id || "custom";
@@ -1128,6 +1190,13 @@ function App() {
             setSavedToastMessage(message);
             setShowSavedToast(true);
         }, 0);
+    };
+
+    const commitSmartChunkSizeDraft = () => {
+        const digitsOnly = smartChunkSizeDraft.replace(/[^\d]/g, "");
+        const nextValue = digitsOnly === "" ? 2000 : Math.max(200, Number.parseInt(digitsOnly, 10) || 2000);
+        setProviderSettings(prev => ({ ...prev, smartChunkSize: nextValue }));
+        setSmartChunkSizeDraft(String(nextValue));
     };
 
     const announceAction = (message: string) => {
@@ -1577,18 +1646,46 @@ function App() {
 
         // Listen for translation tokens
         EventsOn("translation:token", (token: string) => {
+            clearChunkTimers();
             setTranslation(prev => prev + token);
             if (outputRef.current) {
                 outputRef.current.scrollTop = outputRef.current.scrollHeight;
             }
         });
 
+        EventsOn("translation:chunk", (payload: TranslationChunkPayload) => {
+            const chunkIndex = typeof payload.chunk_index === "number" ? payload.chunk_index : 0;
+            const nextText = payload.text || "";
+            const current = renderedChunksRef.current[chunkIndex] || {
+                displayedText: "",
+                draftText: "",
+                finalText: "",
+                phase: "draft" as const,
+            };
+            if ((payload.phase || "").toLowerCase() === "review") {
+                showReviewOverlay(nextText);
+            } else if ((payload.phase || "").toLowerCase() === "final") {
+                streamChunkToFinal(chunkIndex, nextText);
+            } else {
+                setRenderedChunk(chunkIndex, {
+                    ...current,
+                    displayedText: nextText,
+                    draftText: nextText,
+                    phase: "draft",
+                });
+            }
+            if (outputRef.current) {
+                outputRef.current.scrollTop = outputRef.current.scrollHeight;
+            }
+        });
+
         EventsOn("translation:clear", () => {
-            setTranslation("");
+            resetTranslationPresentation();
         });
 
         EventsOn("translation:complete", (payload: TranslationCompletePayload) => {
-            setTranslation(payload.text || "");
+            const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
+            setTranslation(renderedChunkText || payload.text || "");
             if (outputRef.current) {
                 outputRef.current.scrollTop = outputRef.current.scrollHeight;
             }
@@ -1614,10 +1711,6 @@ function App() {
         EventsOn("translation:debug", (payload: DebugPayload) => {
             if (payload.direction === "note" && payload.endpoint === "prompt:translation") {
                 setLastTranslationPromptPreview(payload.payload || "");
-                return;
-            }
-            if (payload.direction === "note" && payload.endpoint === "prompt:postedit") {
-                setLastPostEditPromptPreview(payload.payload || "");
                 return;
             }
             if (payload.direction === "note" && payload.endpoint === "prompt:topic-aware-hints") {
@@ -1702,8 +1795,12 @@ function App() {
             if (progressHideTimerRef.current !== null) {
                 window.clearTimeout(progressHideTimerRef.current);
             }
+            if (reviewOverlayTimerRef.current !== null) {
+                window.clearTimeout(reviewOverlayTimerRef.current);
+            }
             window.removeEventListener("keydown", handleKeyDown);
             EventsOff("translation:token");
+            EventsOff("translation:chunk");
             EventsOff("translation:clear");
             EventsOff("translation:complete");
             EventsOff("translation:debug");
@@ -1714,6 +1811,7 @@ function App() {
             EventsOff("menu:font-increase");
             EventsOff("menu:font-decrease");
             EventsOff("menu:font-reset");
+            clearChunkTimers();
         };
     }, [isDebugStudioWindow]);
 
@@ -1729,9 +1827,7 @@ function App() {
             setDebugRequest(snapshot.debugRequest || "");
             setDebugResponse(snapshot.debugResponse || "");
             setDebugTranslationPromptTemplate(snapshot.debugTranslationPromptTemplate || "");
-            setDebugPostEditPromptTemplate(snapshot.debugPostEditPromptTemplate || "");
             setLastTranslationPromptPreview(snapshot.lastTranslationPromptPreview || "");
-            setLastPostEditPromptPreview(snapshot.lastPostEditPromptPreview || "");
             setLastTopicAwareHintsPreview(snapshot.lastTopicAwareHintsPreview || "");
         };
 
@@ -1767,9 +1863,7 @@ function App() {
             debugRequest,
             debugResponse,
             debugTranslationPromptTemplate,
-            debugPostEditPromptTemplate,
             lastTranslationPromptPreview,
-            lastPostEditPromptPreview,
             lastTopicAwareHintsPreview,
         };
         const raw = JSON.stringify(snapshot);
@@ -1783,9 +1877,7 @@ function App() {
         debugRequest,
         debugResponse,
         debugTranslationPromptTemplate,
-        debugPostEditPromptTemplate,
         lastTranslationPromptPreview,
-        lastPostEditPromptPreview,
         lastTopicAwareHintsPreview,
     ]);
 
@@ -1824,6 +1916,10 @@ function App() {
     }, [showSavedToast, savedToastMessage]);
 
     useEffect(() => {
+        setSmartChunkSizeDraft(String(providerSettings.smartChunkSize));
+    }, [providerSettings.smartChunkSize]);
+
+    useEffect(() => {
         if (isDebugStudioWindow) {
             return;
         }
@@ -1831,7 +1927,6 @@ function App() {
             void SaveHostProviderSettings(llm.ProviderSettings.createFrom({
                 ...providerSettings,
                 debugTranslationPromptTemplate: "",
-                debugPostEditPromptTemplate: "",
             })).catch((err: any) => {
                 console.error("Could not persist host provider settings:", err);
             });
@@ -1946,13 +2041,14 @@ function App() {
         const runID = translationRunIdRef.current + 1;
         translationRunIdRef.current = runID;
         const isActiveRun = () => translationRunIdRef.current === runID;
+        resetTranslationPresentation();
+        setLastTopicAwareHintsPreview("");
 
         const runTranslation = async (settings: ProviderSettings) => {
             const payload = llm.TranslationRequest.createFrom({
                 settings: llm.ProviderSettings.createFrom({
                     ...settings,
                     debugTranslationPromptTemplate: debugTranslationPromptTemplate.trim(),
-                    debugPostEditPromptTemplate: debugPostEditPromptTemplate.trim(),
                 }),
                 sourceText,
                 sourceLang,
@@ -1981,7 +2077,31 @@ function App() {
                                 return;
                             }
                             if (event === "token") {
+                                clearChunkTimers();
                                 setTranslation(prev => prev + (data?.token || ""));
+                                return;
+                            }
+                            if (event === "chunk") {
+                                const chunkIndex = typeof data?.chunk_index === "number" ? data.chunk_index : 0;
+                                const nextText = data?.text || "";
+                                const current = renderedChunksRef.current[chunkIndex] || {
+                                    displayedText: "",
+                                    draftText: "",
+                                    finalText: "",
+                                    phase: "draft" as const,
+                                };
+                                if ((data?.phase || "").toLowerCase() === "review") {
+                                    showReviewOverlay(nextText);
+                                } else if ((data?.phase || "").toLowerCase() === "final") {
+                                    streamChunkToFinal(chunkIndex, nextText);
+                                } else {
+                                    setRenderedChunk(chunkIndex, {
+                                        ...current,
+                                        displayedText: nextText,
+                                        draftText: nextText,
+                                        phase: "draft",
+                                    });
+                                }
                                 return;
                             }
                             if (event === "progress") {
@@ -2009,7 +2129,8 @@ function App() {
                                 return;
                             }
                             if (event === "complete") {
-                                setTranslation(data?.text || "");
+                                const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
+                                setTranslation(renderedChunkText || data?.text || "");
                                 if (progressHideTimerRef.current !== null) {
                                     window.clearTimeout(progressHideTimerRef.current);
                                 }
@@ -2448,7 +2569,7 @@ function App() {
 
     const updateGlossaryRows = (tab: GlossaryTab, updater: (rows: GlossaryRow[]) => GlossaryRow[]) => {
         if (tab === "user") {
-            setEnhancedContextUserRows(prev => updater(prev));
+            setEnhancedContextUserRows(prev => normalizeUserGlossaryRows(updater(prev)));
             return;
         }
         setEnhancedContextExtractedRows(prev => updater(prev));
@@ -2459,15 +2580,12 @@ function App() {
     };
 
     const handleAddUserGlossaryRow = () => {
-        setEnhancedContextUserRows(prev => [...prev, createGlossaryRow()]);
+        setEnhancedContextUserRows(prev => normalizeUserGlossaryRows([...prev, createGlossaryRow()]));
     };
 
     const handleDeleteGlossaryRow = (tab: GlossaryTab, rowId: string) => {
         updateGlossaryRows(tab, rows => {
             const next = rows.filter(row => row.id !== rowId);
-            if (tab === "user" && next.length === 0) {
-                return [createGlossaryRow()];
-            }
             return next;
         });
     };
@@ -2478,7 +2596,7 @@ function App() {
             if (content !== undefined && content !== null && content !== "") {
                 const parsedRows = parseGlossaryText(content).map(entry => createGlossaryRow(entry.source, entry.target));
                 if (tab === "user") {
-                    setEnhancedContextUserRows(parsedRows.length > 0 ? parsedRows : [createGlossaryRow()]);
+                    setEnhancedContextUserRows(normalizeUserGlossaryRows(parsedRows));
                     announceAction("Loaded user glossary file.");
                 } else {
                     setEnhancedContextExtractedRows(prev => {
@@ -2514,7 +2632,7 @@ function App() {
 
     const handleClearEnhancedContextGlossary = (tab: GlossaryTab) => {
         if (tab === "user") {
-            setEnhancedContextUserRows([createGlossaryRow()]);
+            setEnhancedContextUserRows(normalizeUserGlossaryRows([]));
             announceAction("Cleared user glossary rows.");
             return;
         }
@@ -2565,12 +2683,9 @@ function App() {
                 debugRequest={debugRequest}
                 debugResponse={debugResponse}
                 debugTranslationPromptTemplate={debugTranslationPromptTemplate}
-                debugPostEditPromptTemplate={debugPostEditPromptTemplate}
                 lastTranslationPromptPreview={lastTranslationPromptPreview}
-                lastPostEditPromptPreview={lastPostEditPromptPreview}
                 lastTopicAwareHintsPreview={lastTopicAwareHintsPreview}
                 setDebugTranslationPromptTemplate={setDebugTranslationPromptTemplate}
-                setDebugPostEditPromptTemplate={setDebugPostEditPromptTemplate}
                 setDebugRequest={setDebugRequest}
                 setDebugResponse={setDebugResponse}
             />
@@ -3244,15 +3359,12 @@ function App() {
                                                 type="text"
                                                 inputMode="numeric"
                                                 pattern="[0-9]*"
-                                                value={String(providerSettings.smartChunkSize)}
+                                                value={smartChunkSizeDraft}
                                                 disabled={!providerSettings.enableSmartChunking}
                                                 onChange={e => {
-                                                    const digitsOnly = e.target.value.replace(/[^\d]/g, "");
-                                                    setProviderSettings(prev => ({
-                                                        ...prev,
-                                                        smartChunkSize: digitsOnly === "" ? 2000 : Math.max(200, Number.parseInt(digitsOnly, 10) || 2000),
-                                                    }));
+                                                    setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
                                                 }}
+                                                onBlur={commitSmartChunkSizeDraft}
                                                 placeholder="2000"
                                             />
                                         </label>
@@ -3376,15 +3488,12 @@ function App() {
                                                         type="text"
                                                         inputMode="numeric"
                                                         pattern="[0-9]*"
-                                                        value={String(providerSettings.smartChunkSize)}
+                                                        value={smartChunkSizeDraft}
                                                         disabled={!providerSettings.enableSmartChunking}
                                                         onChange={e => {
-                                                            const digitsOnly = e.target.value.replace(/[^\d]/g, "");
-                                                            setProviderSettings(prev => ({
-                                                                ...prev,
-                                                                smartChunkSize: digitsOnly === "" ? 2000 : Math.max(200, Number.parseInt(digitsOnly, 10) || 2000),
-                                                            }));
+                                                            setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
                                                         }}
+                                                        onBlur={commitSmartChunkSizeDraft}
                                                         placeholder="2000"
                                                     />
                                                 </label>
@@ -3596,9 +3705,6 @@ function App() {
                                                 <div className="enhanced-context-toolbar">
                                                     <div className="enhanced-context-toolbar-title">User-defined glossary rows</div>
                                                     <div className="glossary-toolbar">
-                                                        <button type="button" className="icon-btn" onClick={handleAddUserGlossaryRow} title="Add Row">
-                                                            <span className="material-symbols-outlined">add</span>
-                                                        </button>
                                                         <button type="button" className="icon-btn" onClick={() => void handleOpenEnhancedContextGlossary("user")} title="Open User Glossary File">
                                                             <span className="material-symbols-outlined">folder_open</span>
                                                         </button>
@@ -3647,6 +3753,12 @@ function App() {
                                                             ))}
                                                         </tbody>
                                                     </table>
+                                                </div>
+                                                <div className="enhanced-context-table-footer">
+                                                    <button type="button" className="btn btn-secondary btn-small" onClick={handleAddUserGlossaryRow}>
+                                                        <span className="material-symbols-outlined">add</span>
+                                                        Add Row
+                                                    </button>
                                                 </div>
                                             </div>
                                         ) : (
@@ -3744,6 +3856,12 @@ function App() {
                             <div className="progress-detail">{progressState.detail || "Waiting for progress events"}</div>
                         </div>
                     </div>
+                    {reviewOverlay.visible && (
+                        <div className={`progress-review-panel ${reviewOverlay.hiding ? "is-hiding" : ""}`} role="status" aria-live="polite">
+                            <div className="progress-review-title">Review Notes</div>
+                            <div className="progress-review-body markdown-output">{renderMarkdown(formatReviewOverlayText(reviewOverlay.text))}</div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

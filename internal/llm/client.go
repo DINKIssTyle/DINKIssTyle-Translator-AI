@@ -24,6 +24,8 @@ var (
 	protectedTermPattern     = regexp.MustCompile(`\b(?:[A-Z][a-z]+(?:[\s-]+[A-Z][a-z]+)+|[A-Z]{2,}(?:[-/][A-Z0-9]{2,})*|[A-Z][a-zA-Z0-9]+(?:[-/][A-Za-z0-9]+)+)\b`)
 	glossaryBlockPattern     = regexp.MustCompile(`(?s)\n?(?:Use the following User Glossary.*?\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?|User Glossary:\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?)`)
 	emptyDebugSectionPattern = regexp.MustCompile(`(?m)^(Protected names and terms|User glossary|Chunk label|Previous context|Opening source paragraph|Opening translated paragraph|Recent overlap):\n(?:[ \t]*\n)?`)
+	inlineProofreadPattern   = regexp.MustCompile(`(?is)\{draft:\s*(.*?)\s*\}\s*\{review:\s*(.*?)\s*\}\s*\{final:\s*(.*?)\s*\}\s*$`)
+	fencedCodeBlockPattern   = regexp.MustCompile("(?s)^```[a-zA-Z0-9_-]*\\s*(.*?)\\s*```$")
 )
 
 type Client struct {
@@ -36,6 +38,7 @@ type Client struct {
 
 type eventSink interface {
 	Token(string)
+	Chunk(TranslationChunkPayload)
 	Clear()
 	Complete(TranslationCompletePayload)
 	Progress(TranslationProgressPayload)
@@ -173,6 +176,12 @@ type TranslationCompletePayload struct {
 	Text string `json:"text"`
 }
 
+type TranslationChunkPayload struct {
+	ChunkIndex int    `json:"chunk_index"`
+	Phase      string `json:"phase"`
+	Text       string `json:"text"`
+}
+
 type TranslationProgressPayload struct {
 	Stage           string   `json:"stage"`
 	Label           string   `json:"label"`
@@ -214,6 +223,22 @@ type translationRuntimeOptions struct {
 	ProgressMetrics            progressMetrics
 }
 
+type inlineProofreadResult struct {
+	Draft  string
+	Review string
+	Final  string
+}
+
+type inlineProofreadSections struct {
+	Draft       string
+	Review      string
+	Final       string
+	HasDraft    bool
+	HasReview   bool
+	HasFinal    bool
+	FinalClosed bool
+}
+
 type lmStudioChatRequest struct {
 	Model       string   `json:"model"`
 	Input       string   `json:"input"`
@@ -234,6 +259,7 @@ type promptPassOptions struct {
 	GenerateLabel       string
 	GenerateDetail      string
 	StreamTokens        bool
+	OnToken             func(string)
 	EmitStats           bool
 	Temperature         *float64
 	OverallProgressBase float64
@@ -385,20 +411,176 @@ func (p postEditPass) apply(reqData TranslationRequest, draft string, options tr
 	return p.client.postEditTranslation(p.reqCtx, reqData, draft, postEditOptions)
 }
 
+type inlineProofreadPass struct {
+	client        *Client
+	reqCtx        context.Context
+	emitLifecycle bool
+}
+
+type inlineProofreadStreamState struct {
+	raw          strings.Builder
+	lastDraft    string
+	lastReview   string
+	lastFinal    string
+	enteredFinal bool
+	finalClosed  bool
+}
+
+func (s *inlineProofreadStreamState) consume(piece string) (string, string, string) {
+	if piece == "" {
+		return "", "", ""
+	}
+	s.raw.WriteString(piece)
+	parsed := extractInlineProofreadSections(s.raw.String())
+
+	var nextDraft string
+	if !s.enteredFinal && parsed.Draft != s.lastDraft {
+		s.lastDraft = parsed.Draft
+		nextDraft = parsed.Draft
+	}
+
+	var nextReview string
+	if parsed.HasReview && parsed.Review != s.lastReview {
+		s.lastReview = parsed.Review
+		nextReview = parsed.Review
+	}
+
+	var nextFinal string
+	if parsed.HasFinal {
+		if strings.TrimSpace(parsed.Final) != "" {
+			s.enteredFinal = true
+		}
+		if parsed.Final != s.lastFinal {
+			s.lastFinal = parsed.Final
+			nextFinal = parsed.Final
+		}
+	}
+	s.finalClosed = parsed.FinalClosed
+
+	return nextDraft, nextReview, nextFinal
+}
+
+func (p inlineProofreadPass) apply(reqData TranslationRequest, options translationRuntimeOptions, currentChunk int, totalChunks int) (inlineProofreadResult, TranslationStatsPayload, error) {
+	prompt := buildInlineProofreadPrompt(reqData.Settings, reqData.SourceLang, reqData.TargetLang, reqData.SourceText, reqData.Instruction, options)
+	resolvedTemperature := resolveInlineProofreadTemperature(reqData.Settings)
+	streamState := inlineProofreadStreamState{}
+	emitChunkUpdate := func(phase string, text string) {
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		p.client.emitChunk(TranslationChunkPayload{
+			ChunkIndex: currentChunk - 1,
+			Phase:      phase,
+			Text:       cleanupTranslatedText(text),
+		})
+	}
+	handlePiece := func(piece string) {
+		draft, review, final := streamState.consume(piece)
+		if draft != "" && !streamState.enteredFinal {
+			emitChunkUpdate("draft", draft)
+		}
+		if review != "" {
+			emitChunkUpdate("review", review)
+		}
+		if final != "" {
+			emitChunkUpdate("final", final)
+		}
+	}
+
+	if p.emitLifecycle {
+		label := "Translating and proofreading"
+		detail := "Creating a draft and refining it in one pass"
+		if totalChunks > 1 {
+			label = fmt.Sprintf("Translating and proofreading %s", options.ChunkLabel)
+			detail = "Generating draft and final text for this section"
+		}
+		p.client.emitProgressWithMetrics(
+			"chunking",
+			label,
+			detail,
+			overallPassProgress(totalChunks, currentChunk, false, "translate"),
+			false,
+			buildProgressMetrics(totalChunks, currentChunk, false, "translate"),
+		)
+	}
+
+	p.client.emitDebug("note", "prompt:translation", prompt)
+	p.client.emitDebug("note", "temperature:translation", formatTemperatureDebugNote("inline-proofread", resolvedTemperature))
+
+	var (
+		raw   string
+		stats TranslationStatsPayload
+		err   error
+	)
+	if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
+		raw, stats, err = p.client.runLMStudioPrompt(p.reqCtx, reqData.Settings, promptPassOptions{
+			Prompt:              prompt,
+			PreparingLabel:      "Preparing request",
+			PreparingDetail:     "Connecting to LM Studio",
+			LoadingLabel:        "Loading model",
+			LoadingDetail:       "Preparing model weights",
+			PromptLabel:         "Processing prompt",
+			PromptDetail:        "Tokenizing multi-step translation prompt",
+			GenerateLabel:       "Translating and proofreading",
+			GenerateDetail:      "Waiting for draft and final output",
+			StreamTokens:        false,
+			OnToken:             handlePiece,
+			EmitStats:           true,
+			Temperature:         resolvedTemperature,
+			OverallProgressBase: options.OverallProgressBase,
+			OverallProgressSpan: options.OverallProgressSpan,
+			ProgressMetrics:     options.ProgressMetrics,
+		})
+	} else {
+		raw, stats, err = p.client.runCompatiblePrompt(p.reqCtx, reqData.Settings, promptPassOptions{
+			Prompt:              prompt,
+			PreparingLabel:      "Preparing request",
+			PreparingDetail:     "Connecting to completion endpoint",
+			GenerateLabel:       "Translating and proofreading",
+			GenerateDetail:      "Waiting for draft and final output",
+			StreamTokens:        false,
+			OnToken:             handlePiece,
+			EmitStats:           false,
+			Temperature:         resolvedTemperature,
+			OverallProgressBase: options.OverallProgressBase,
+			OverallProgressSpan: options.OverallProgressSpan,
+			ProgressMetrics:     options.ProgressMetrics,
+		})
+	}
+	if err != nil {
+		return inlineProofreadResult{}, TranslationStatsPayload{}, err
+	}
+
+	parsed, err := parseInlineProofreadResponse(raw)
+	if err != nil {
+		p.client.emitDebug("note", "inline-proofread:parse-fallback", map[string]any{
+			"message": "inline proofread output did not match expected structure; falling back to legacy two-pass flow",
+			"raw":     raw,
+		})
+		return inlineProofreadResult{}, TranslationStatsPayload{}, err
+	}
+
+	parsed.Draft = cleanupTranslatedText(parsed.Draft)
+	parsed.Final = cleanupTranslatedText(parsed.Final)
+	return parsed, stats, nil
+}
+
 // contextMemory는 청크 간 이어져야 하는 문맥 기억을 관리한다.
 // 이전 요약, opening anchor, overlap 관련 runtime 옵션 생성과 갱신을 맡는다.
 type contextMemory struct {
 	settings                   ProviderSettings
 	instruction                string
+	separatePostEditPass       bool
 	previousSummary            string
 	openingSourceParagraph     string
 	openingTranslatedParagraph string
 }
 
-func newContextMemory(reqData TranslationRequest, openingSourceParagraph string) *contextMemory {
+func newContextMemory(reqData TranslationRequest, openingSourceParagraph string, separatePostEditPass bool) *contextMemory {
 	return &contextMemory{
 		settings:               reqData.Settings,
 		instruction:            reqData.Instruction,
+		separatePostEditPass:   separatePostEditPass,
 		openingSourceParagraph: openingSourceParagraph,
 	}
 }
@@ -410,8 +592,8 @@ func (m *contextMemory) runtimeOptions(chunk smartChunk, currentChunk int, total
 		OverlapContext:             chunk.OverlapContext,
 		OpeningSourceParagraph:     m.openingSourceParagraph,
 		OpeningTranslatedParagraph: m.openingTranslatedParagraph,
-		ProgressMetrics:            buildProgressMetrics(totalChunks, currentChunk, m.settings.EnablePostEdit, "translate"),
-		OverallProgressBase:        derefFloat(overallPassProgress(totalChunks, currentChunk, m.settings.EnablePostEdit, "translate")),
+		ProgressMetrics:            buildProgressMetrics(totalChunks, currentChunk, m.separatePostEditPass, "translate"),
+		OverallProgressBase:        derefFloat(overallPassProgress(totalChunks, currentChunk, m.separatePostEditPass, "translate")),
 	}
 }
 
@@ -426,14 +608,16 @@ func (m *contextMemory) update(sourceChunk string, translatedChunk string, combi
 // 입력 전처리, 청킹, 초벌 번역, 선택적 포스트 에디트, 문맥 계승, 결과 결합을
 // 한 구조 안에서 순차적으로 관리해 엔트리 포인트별 중복을 줄인다.
 type translationHarness struct {
-	client          *Client
-	reqCtx          context.Context
-	reqData         TranslationRequest
-	mode            translationHarnessMode
-	plan            plannedTranslation
-	draftTranslator draftTranslator
-	postEditor      postEditPass
-	contextMemory   *contextMemory
+	client               *Client
+	reqCtx               context.Context
+	reqData              TranslationRequest
+	mode                 translationHarnessMode
+	plan                 plannedTranslation
+	draftTranslator      draftTranslator
+	inlineProofread      inlineProofreadPass
+	postEditor           postEditPass
+	contextMemory        *contextMemory
+	separatePostEditPass bool
 
 	aggregated TranslationStatsPayload
 	finalText  strings.Builder
@@ -482,16 +666,19 @@ func (c *Client) TranslateTextStream(reqData TranslationRequest, sink eventSink)
 func newTranslationHarness(c *Client, reqCtx context.Context, reqData TranslationRequest, mode translationHarnessMode) *translationHarness {
 	reqData.SourceText = preprocessSourceText(reqData.SourceText)
 	plan := (chunkPlanner{}).plan(reqData)
+	separatePostEditPass := reqData.Settings.EnablePostEdit && !useInlineProofread(reqData.Settings)
 
 	return &translationHarness{
-		client:          c,
-		reqCtx:          reqCtx,
-		reqData:         reqData,
-		mode:            mode,
-		plan:            plan,
-		draftTranslator: draftTranslator{client: c, reqCtx: reqCtx},
-		postEditor:      postEditPass{client: c, reqCtx: reqCtx, emitLifecycle: mode.emitLifecycle},
-		contextMemory:   newContextMemory(reqData, plan.openingSourceParagraph),
+		client:               c,
+		reqCtx:               reqCtx,
+		reqData:              reqData,
+		mode:                 mode,
+		plan:                 plan,
+		draftTranslator:      draftTranslator{client: c, reqCtx: reqCtx},
+		inlineProofread:      inlineProofreadPass{client: c, reqCtx: reqCtx, emitLifecycle: mode.emitLifecycle},
+		postEditor:           postEditPass{client: c, reqCtx: reqCtx, emitLifecycle: mode.emitLifecycle},
+		contextMemory:        newContextMemory(reqData, plan.openingSourceParagraph, separatePostEditPass),
+		separatePostEditPass: separatePostEditPass,
 	}
 }
 
@@ -507,27 +694,21 @@ func (h *translationHarness) run() (string, TranslationStatsPayload, error) {
 }
 
 func (h *translationHarness) runSingleChunk() (string, TranslationStatsPayload, error) {
-	options := translationRuntimeOptions{}
 	if h.mode.emitLifecycle {
 		h.client.emitProgressWithMetrics(
 			"chunking",
 			"Generating translation",
 			"Translating the full text",
-			overallPassProgress(1, 1, h.reqData.Settings.EnablePostEdit, "translate"),
+			overallPassProgress(1, 1, h.separatePostEditPass, "translate"),
 			false,
-			buildProgressMetrics(1, 1, h.reqData.Settings.EnablePostEdit, "translate"),
+			buildProgressMetrics(1, 1, h.separatePostEditPass, "translate"),
 		)
 	}
 
-	text, stats, err := h.draftTranslator.translate(h.reqData, options)
+	text, stats, err := h.runChunk(0, h.plan.chunks[0])
 	if err != nil {
 		return "", TranslationStatsPayload{}, err
 	}
-	text, err = h.postEditor.apply(h.reqData, text, options, 1, 1)
-	if err != nil {
-		return "", TranslationStatsPayload{}, err
-	}
-	text = cleanupTranslatedText(text)
 
 	h.finalizeLifecycle(text, stats)
 	return text, stats, nil
@@ -576,10 +757,18 @@ func (h *translationHarness) runChunk(index int, chunk smartChunk) (string, Tran
 			"chunking",
 			fmt.Sprintf("Translating %s", options.ChunkLabel),
 			fmt.Sprintf("Smart chunking active for long text (%d chars)", h.plan.chunkSize),
-			overallPassProgress(len(h.plan.chunks), index+1, h.reqData.Settings.EnablePostEdit, "translate"),
+			overallPassProgress(len(h.plan.chunks), index+1, h.separatePostEditPass, "translate"),
 			false,
 			options.ProgressMetrics,
 		)
+	}
+
+	if useInlineProofread(chunkReq.Settings) {
+		result, stats, err := h.inlineProofread.apply(chunkReq, options, index+1, len(h.plan.chunks))
+		if err == nil {
+			return result.Final, stats, nil
+		}
+		return "", TranslationStatsPayload{}, err
 	}
 
 	translated, stats, err := h.draftTranslator.translate(chunkReq, options)
@@ -747,6 +936,9 @@ func (c *Client) runCompatiblePrompt(reqCtx context.Context, settings ProviderSe
 						}
 						tokenChunkCount++
 						fullResponse.WriteString(piece)
+						if options.OnToken != nil {
+							options.OnToken(piece)
+						}
 						if options.StreamTokens {
 							c.emitToken(piece)
 						}
@@ -925,6 +1117,9 @@ func (c *Client) runLMStudioPrompt(reqCtx context.Context, settings ProviderSett
 					continue
 				}
 				fullResponse.WriteString(piece)
+				if options.OnToken != nil {
+					options.OnToken(piece)
+				}
 				if options.StreamTokens {
 					c.emitToken(piece)
 				}
@@ -1151,11 +1346,124 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 		sourceLabel,
 		targetLabel,
 	))
+	builder.WriteString("- Preserve the source paragraph structure and blank-line breaks whenever natural in the target language.\n")
+	builder.WriteString("- Do not collapse multiple source paragraphs into one paragraph.\n")
 	builder.WriteString("[End Of Instructions]\n")
 	builder.WriteString("---\n[Source Text Begins]\n")
 	builder.WriteString(sourceText)
 	builder.WriteString("\n---\n[Source Text Ends]\n")
 
+	return builder.String()
+}
+
+func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, instruction string, runtimeOptions translationRuntimeOptions) string {
+	sourceLabel := normalizeLanguageLabel(sourceLang)
+	targetLabel := normalizeLanguageLabel(targetLang)
+	glossary := effectiveGlossary(settings, sourceText)
+	protectedTerms := filterProtectedTermsByGlossary(extractProtectedTerms(sourceText), glossary)
+
+	// Proofread After Translation 교정용 프롬프트 조립부
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf(
+		"You are a professional %s to %s translator.\n",
+		sourceLabel,
+		targetLabel,
+	))
+	builder.WriteString(fmt.Sprintf("Task: Translate the ENTIRE source text into %s. Do not omit any part.\n", targetLabel))
+	builder.WriteString("Use this exact internal workflow: draft, brief review notes, final.\n")
+	builder.WriteString("Output ONLY the exact format below. Do not add any other text or conversational filler.\n\n")
+
+	// 구조적 명확성을 위해 중괄호 포맷 강조
+	builder.WriteString("{draft: full draft translation}\n\n")
+	builder.WriteString("{review: brief revision notes}\n\n")
+	builder.WriteString("{final: final natural translation}\n\n")
+
+	builder.WriteString("Hard requirements:\n")
+	builder.WriteString("- The response must contain the COMPLETE translation of the input, not just the beginning.\n")
+	builder.WriteString("- Do not summarize. Every paragraph in the source must have a corresponding paragraph in the output.\n")
+	builder.WriteString("- The very first characters of your reply must be `{draft:`.\n")
+	builder.WriteString("- The very last character of your reply must be `}`.\n")
+	builder.WriteString("- Do not output introductions, explanations, labels like 'Step 1', or Markdown code fences (```).\n")
+	builder.WriteString("- Keep the {draft:} faithful and literal.\n")
+	// builder.WriteString("- Keep the {review:} concise and practical.\n")
+	// 기존의 짧은 리뷰 지시를 아래 내용으로 교체
+	builder.WriteString("- Formulate the {review:} strictly as a bulleted list. Do not write paragraphs.\n")
+	builder.WriteString("- Each bullet must follow this exact format: `- Issue: [awkward/literal part from draft] -> Fix: [natural alternative for final]`.\n")
+	builder.WriteString(fmt.Sprintf("- In {review:}, explicitly check whether the draft is fully and correctly rendered in %s and whether any leftover source-language or third-language text is unintended. Do not flag intentional bilingual notation, quoted originals, titles, or required retained forms.\n", targetLabel))
+	builder.WriteString("- Focus ONLY on unnatural phrasing, structural adjustments, tone, and incorrect language carry-over. If no changes are needed, write `- Issue: None -> Fix: None`.\n")
+	// 기존 프롬프트
+	builder.WriteString(fmt.Sprintf("- Make the {final:} more natural in %s while preserving all meaning and paragraph breaks.\n", targetLabel))
+	builder.WriteString("- The user style instruction is mandatory.\n")
+
+	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
+		builder.WriteString("\n[User Style Instruction]\n")
+		builder.WriteString(trimmedInstruction)
+		builder.WriteString("\n")
+	}
+
+	if settings.EnableEnhancedContextTranslation {
+		builder.WriteString("\n[Consistency Rules]\n")
+		builder.WriteString(fmt.Sprintf(
+			"Maintain consistent %s translations for names, places, organizations, products, commands, and technical terms. Reuse established renderings unless the source text, user instruction, or user glossary explicitly requires a different form.\n",
+			targetLabel,
+		))
+		if glossary != "" {
+			builder.WriteString("\nUser Glossary:\n<GLOSSARY>\n")
+			builder.WriteString(glossary)
+			builder.WriteString("\n</GLOSSARY>\n")
+		}
+	}
+
+	if len(protectedTerms) > 0 {
+		builder.WriteString("\n[Protected Names And Terms]\n")
+		for _, term := range protectedTerms {
+			builder.WriteString("- ")
+			builder.WriteString(term)
+			builder.WriteString("\n")
+		}
+	}
+
+	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
+		builder.WriteString("\n[Current Section]\n")
+		builder.WriteString(chunkLabel)
+		builder.WriteString("\n")
+	}
+
+	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
+		builder.WriteString("\n[Previous Context]\n")
+		builder.WriteString(contextSummary)
+		builder.WriteString("\nUse this only to preserve continuity and terminology. Do not repeat already translated content.\n")
+	}
+
+	if openingSource := strings.TrimSpace(runtimeOptions.OpeningSourceParagraph); openingSource != "" {
+		builder.WriteString("\n[Opening Style Anchor]\n")
+		builder.WriteString("Use the opening paragraph only as weak guidance for voice and register. Do not copy it.\n")
+		builder.WriteString("Opening source paragraph:\n")
+		builder.WriteString(openingSource)
+		builder.WriteString("\n")
+		if openingTranslated := strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph); openingTranslated != "" {
+			builder.WriteString("Opening translated paragraph:\n")
+			builder.WriteString(openingTranslated)
+			builder.WriteString("\n")
+		}
+	}
+
+	if overlapContext := strings.TrimSpace(runtimeOptions.OverlapContext); overlapContext != "" {
+		builder.WriteString("\n[Recent Source Overlap]\n")
+		builder.WriteString(overlapContext)
+		builder.WriteString("\nUse this only as reference context. Do not repeat or retranslate this overlap.\n")
+	}
+
+	if settings.EnableTopicAwarePostEdit {
+		if topicHints := buildTopicAwarePostEditHints(sourceText, "", instruction); topicHints != "" {
+			builder.WriteString("\n[Likely Genre Or Topic Hint]\n")
+			builder.WriteString(topicHints)
+			builder.WriteString("Use these hints only to improve register and terminology consistency.\n")
+		}
+	}
+
+	builder.WriteString("\n[Source Text]\n")
+	builder.WriteString(sourceText)
 	return builder.String()
 }
 
@@ -1253,6 +1561,8 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	builder.WriteString("- Preserve intentional bilingual notation only when it is clearly marked with parentheses, quotes, aliases, or original-title notation.\n")
 	builder.WriteString("- User instruction compliance has priority over preserving the existing draft wording.\n")
 	builder.WriteString("- Compare the source against the low-temperature draft and revise wherever a correction, fluency improvement, or more native phrasing is clearly justified.\n")
+	builder.WriteString("- Preserve the source paragraph structure and blank-line breaks whenever natural in the target language.\n")
+	builder.WriteString("- Do not collapse multiple source paragraphs into one paragraph.\n")
 	builder.WriteString(fmt.Sprintf(
 		"- If the draft is accurate but sounds translation-like, rewrite it into more natural %s phrasing while preserving the exact meaning.\n",
 		targetLabel,
@@ -1307,6 +1617,136 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	builder.WriteString("\n---\n[Translated Draft Ends]\n")
 
 	return builder.String()
+}
+
+func parseInlineProofreadResponse(raw string) (inlineProofreadResult, error) {
+	sections := extractInlineProofreadSections(raw)
+	result := inlineProofreadResult{
+		Draft:  strings.TrimSpace(sections.Draft),
+		Review: strings.TrimSpace(sections.Review),
+		Final:  strings.TrimSpace(sections.Final),
+	}
+	if result.Draft == "" || result.Final == "" {
+		return inlineProofreadResult{}, fmt.Errorf("inline proofread response was missing draft or final text")
+	}
+	return result, nil
+}
+
+func extractInlineProofreadVisibleText(raw string) (string, string, bool) {
+	sections := extractInlineProofreadSections(raw)
+	return sections.Draft, sections.Final, sections.HasFinal
+}
+
+func extractInlineProofreadSections(raw string) inlineProofreadSections {
+	trimmed := strings.TrimSpace(raw)
+	if match := fencedCodeBlockPattern.FindStringSubmatch(trimmed); len(match) == 2 {
+		raw = match[1]
+	}
+
+	draftStart := strings.Index(raw, "{draft:")
+	if draftStart < 0 {
+		return inlineProofreadSections{}
+	}
+	draftBodyStart := draftStart + len("{draft:")
+	reviewStart := findFirstIndex(raw, draftBodyStart, []string{"{review:"})
+	finalMarkerStart := strings.Index(raw[draftBodyStart:], "{final:")
+	if finalMarkerStart >= 0 {
+		finalMarkerStart += draftBodyStart
+	}
+	draftEnd := len(raw)
+	if reviewStart >= 0 && reviewStart < draftEnd {
+		draftEnd = reviewStart
+	}
+	if finalMarkerStart >= 0 && finalMarkerStart < draftEnd {
+		draftEnd = finalMarkerStart
+	}
+
+	sections := inlineProofreadSections{
+		Draft:    trimInlineSectionBoundary(raw[draftBodyStart:draftEnd], false),
+		HasDraft: true,
+	}
+	if reviewStart < 0 && finalMarkerStart < 0 {
+		return sections
+	}
+
+	if reviewStart >= 0 {
+		reviewBodyStart := reviewStart + len(detectedReviewNeedle(raw[reviewStart:]))
+		reviewEnd := len(raw)
+		if finalMarkerStart >= 0 && finalMarkerStart > reviewBodyStart {
+			reviewEnd = finalMarkerStart
+		}
+		sections.Review = trimInlineSectionBoundary(raw[reviewBodyStart:reviewEnd], false)
+		sections.HasReview = true
+	}
+
+	if finalMarkerStart < 0 {
+		return sections
+	}
+	finalBodyStart := finalMarkerStart + len("{final:")
+	finalEnd := len(raw)
+	if strings.Contains(raw[finalBodyStart:], "}") {
+		sections.FinalClosed = true
+	}
+	sections.Final = trimInlineSectionBoundary(raw[finalBodyStart:finalEnd], true)
+	sections.HasFinal = true
+	return sections
+}
+
+func trimInlineSectionBoundary(text string, allowTrailingText bool) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+
+	trimmed = stripEarlyClosingBrace(trimmed)
+	trimmed = strings.TrimSpace(trimmed)
+
+	if strings.HasSuffix(trimmed, "}") {
+		trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, "}"))
+	}
+
+	return strings.TrimSpace(trimmed)
+}
+
+func stripEarlyClosingBrace(text string) string {
+	braceIndex := strings.Index(text, "}")
+	if braceIndex < 0 {
+		return text
+	}
+
+	newlineIndex := strings.Index(text, "\n")
+	switch {
+	case newlineIndex >= 0 && braceIndex < newlineIndex:
+		return strings.TrimSpace(text[:braceIndex] + text[braceIndex+1:])
+	case newlineIndex < 0 && braceIndex <= 80:
+		return strings.TrimSpace(text[:braceIndex] + text[braceIndex+1:])
+	default:
+		return text
+	}
+}
+
+func detectedReviewNeedle(raw string) string {
+	for _, needle := range []string{"{review:"} {
+		if strings.HasPrefix(raw, needle) {
+			return needle
+		}
+	}
+	return ""
+}
+
+func findFirstIndex(raw string, start int, needles []string) int {
+	first := -1
+	for _, needle := range needles {
+		index := strings.Index(raw[start:], needle)
+		if index < 0 {
+			continue
+		}
+		index += start
+		if first < 0 || index < first {
+			first = index
+		}
+	}
+	return first
 }
 
 // buildTopicAwarePostEditHints는 포스트 에디팅 단계에서 참고할 약한 장르/주제/톤 힌트를 만든다.
@@ -1552,7 +1992,54 @@ func effectiveGlossary(settings ProviderSettings, sourceText string) string {
 	}
 	entries := parseGlossaryEntries(baseGlossary)
 	entries = expandGlossaryEntries(entries, extractProtectedTerms(sourceText))
+	entries = filterGlossaryEntriesBySourceText(entries, sourceText)
 	return formatGlossaryEntries(entries)
+}
+
+func filterGlossaryEntriesBySourceText(entries []glossaryEntry, sourceText string) []glossaryEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	normalizedSource := strings.ToLower(" " + normalizeGlossaryMatchText(sourceText) + " ")
+	if normalizedSource == "" {
+		return nil
+	}
+
+	filtered := make([]glossaryEntry, 0, len(entries))
+	for _, entry := range entries {
+		source := strings.TrimSpace(entry.Source)
+		if source == "" {
+			continue
+		}
+		needle := " " + normalizeGlossaryMatchText(source) + " "
+		if needle != "  " && strings.Contains(normalizedSource, needle) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func normalizeGlossaryMatchText(text string) string {
+	lowered := strings.ToLower(strings.TrimSpace(text))
+	var builder strings.Builder
+	lastSpace := false
+	for _, r := range lowered {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if r == '\'' {
+			builder.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			builder.WriteRune(' ')
+			lastSpace = true
+		}
+	}
+	return strings.Join(strings.Fields(builder.String()), " ")
 }
 
 func glossarySourceTermSet(glossary string) map[string]struct{} {
@@ -1659,12 +2146,23 @@ func preprocessSourceText(text string) string {
 }
 
 func cleanupTranslatedText(text string) string {
-	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized := normalizeEscapedLineBreaks(text)
+	normalized = strings.ReplaceAll(normalized, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
 	for i, line := range lines {
 		lines[i] = cleanInlineNoise(line)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func normalizeEscapedLineBreaks(text string) string {
+	replacer := strings.NewReplacer(
+		`\r\n`, "\n",
+		`\n`, "\n",
+		`\r`, "\n",
+		`\t`, "\t",
+	)
+	return replacer.Replace(text)
 }
 
 func cleanInlineNoise(text string) string {
@@ -2070,7 +2568,7 @@ func buildContextSummary(settings ProviderSettings, instruction, sourceChunk, tr
 	sourceTail := trailingParagraphs(sourceChunk, 320, 2)
 	translatedTail := trailingParagraphs(translatedChunk, 320, 2)
 	parts := make([]string, 0, 5)
-	if styleMemory := buildStyleMemorySummary(settings, instruction, translatedChunk); styleMemory != "" {
+	if styleMemory := buildStyleMemorySummary(settings, instruction, sourceChunk, translatedChunk); styleMemory != "" {
 		parts = append(parts, styleMemory)
 	}
 	if sourceTail != "" {
@@ -2082,7 +2580,7 @@ func buildContextSummary(settings ProviderSettings, instruction, sourceChunk, tr
 	return strings.Join(parts, "\n")
 }
 
-func buildStyleMemorySummary(settings ProviderSettings, instruction, translatedChunk string) string {
+func buildStyleMemorySummary(settings ProviderSettings, instruction, sourceChunk, translatedChunk string) string {
 	lines := make([]string, 0, 6)
 	lines = append(lines, "Carry-forward style memory:")
 	lines = append(lines, "- User instruction remains mandatory for all remaining chunks.")
@@ -2093,7 +2591,7 @@ func buildStyleMemorySummary(settings ProviderSettings, instruction, translatedC
 		lines = append(lines, "- Established tone/register so far: "+tone)
 	}
 	if settings.EnableEnhancedContextTranslation {
-		if lockedTerms := glossaryMemoryLines(settings.EnhancedContextGlossary, 4); len(lockedTerms) > 0 {
+		if lockedTerms := glossaryMemoryLines(effectiveGlossary(settings, sourceChunk), 4); len(lockedTerms) > 0 {
 			lines = append(lines, "- Locked terminology from glossary:")
 			for _, term := range lockedTerms {
 				lines = append(lines, "  "+term)
@@ -2357,6 +2855,10 @@ func resolveDraftTemperature(settings ProviderSettings) *float64 {
 	return normalizeTemperatureValue(settings.Temperature)
 }
 
+func resolveInlineProofreadTemperature(settings ProviderSettings) *float64 {
+	return resolvePostEditTemperature(settings)
+}
+
 func resolvePostEditTemperature(settings ProviderSettings) *float64 {
 	temperature := normalizeTemperatureValue(settings.Temperature)
 	if temperature == nil {
@@ -2366,6 +2868,10 @@ func resolvePostEditTemperature(settings ProviderSettings) *float64 {
 		return floatPtr(0.2)
 	}
 	return temperature
+}
+
+func useInlineProofread(settings ProviderSettings) bool {
+	return settings.EnablePostEdit
 }
 
 func formatTemperatureDebugNote(stage string, temperature *float64) string {
@@ -2427,6 +2933,12 @@ func (c *Client) currentSink() eventSink {
 func (c *Client) emitToken(token string) {
 	if sink := c.currentSink(); sink != nil {
 		sink.Token(token)
+	}
+}
+
+func (c *Client) emitChunk(payload TranslationChunkPayload) {
+	if sink := c.currentSink(); sink != nil {
+		sink.Chunk(payload)
 	}
 }
 
@@ -2524,6 +3036,10 @@ type runtimeEventSink struct {
 
 func (s runtimeEventSink) Token(token string) {
 	runtime.EventsEmit(s.ctx, "translation:token", token)
+}
+
+func (s runtimeEventSink) Chunk(payload TranslationChunkPayload) {
+	runtime.EventsEmit(s.ctx, "translation:chunk", payload)
 }
 
 func (s runtimeEventSink) Clear() {

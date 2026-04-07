@@ -804,6 +804,10 @@ func (s *sseEventSink) Token(token string) {
 	s.send("token", map[string]any{"token": token})
 }
 
+func (s *sseEventSink) Chunk(payload llm.TranslationChunkPayload) {
+	s.send("chunk", payload)
+}
+
 func (s *sseEventSink) Clear() {
 	s.send("clear", map[string]any{"ok": true})
 }
