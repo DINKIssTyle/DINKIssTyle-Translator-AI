@@ -1527,6 +1527,32 @@ textarea {
   display: none;
 }
 
+.review-notes-modal {
+  width: min(880px, calc(100vw - 32px));
+}
+
+.review-notes-modal-body {
+  max-height: min(72vh, 760px);
+  overflow: auto;
+}
+
+.review-notes-content {
+  white-space: normal;
+  line-height: 1.65;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.review-notes-content * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.review-notes-empty {
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
 @keyframes progress-review-enter {
   from {
     opacity: 0;

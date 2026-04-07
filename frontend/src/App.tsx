@@ -46,6 +46,11 @@ type ReviewOverlayState = {
     text: string;
 };
 
+type ChunkReviewNoteState = {
+    chunkIndex: number;
+    text: string;
+};
+
 type OverallProgressEstimate = {
     activeStep: number;
     totalSteps: number;
@@ -556,6 +561,21 @@ function sanitizeTranslation(raw: string): string {
 
 function formatReviewOverlayText(text: string): string {
     return text.replace(/->/g, "→");
+}
+
+function joinReviewNotes(reviewNotes: ChunkReviewNoteState[]): string {
+    const filled = reviewNotes
+        .filter(note => note && note.text.trim())
+        .sort((a, b) => a.chunkIndex - b.chunkIndex);
+    if (filled.length === 0) {
+        return "";
+    }
+    if (filled.length === 1) {
+        return filled[0].text.trim();
+    }
+    return filled
+        .map(note => `### Chunk ${note.chunkIndex + 1}\n\n${note.text.trim()}`)
+        .join("\n\n");
 }
 
 function joinRenderedChunks(chunks: RenderedChunkState[]): string {
@@ -1122,6 +1142,7 @@ function App() {
     const [showSourceEditorModal, setShowSourceEditorModal] = useState(false);
     const [sourceEditorDraft, setSourceEditorDraft] = useState("");
     const [showTranslationViewerModal, setShowTranslationViewerModal] = useState(false);
+    const [showReviewNotesModal, setShowReviewNotesModal] = useState(false);
     const [showTranslationSearchModal, setShowTranslationSearchModal] = useState(false);
     const [translationSearchDraft, setTranslationSearchDraft] = useState("");
     const [translationSearchQuery, setTranslationSearchQuery] = useState("");
@@ -1147,6 +1168,7 @@ function App() {
     const [lastTranslationPromptPreview, setLastTranslationPromptPreview] = useState("");
     const [lastTopicAwareHintsPreview, setLastTopicAwareHintsPreview] = useState("");
     const [reviewOverlay, setReviewOverlay] = useState<ReviewOverlayState>({ visible: false, hiding: false, text: "" });
+    const [reviewNotes, setReviewNotes] = useState<ChunkReviewNoteState[]>([]);
     const [chunkPresentationVersion, setChunkPresentationVersion] = useState(0);
 
     const outputRef = useRef<HTMLDivElement>(null);
@@ -1193,6 +1215,8 @@ function App() {
     const enhancedContextDraftGlossary = buildCombinedGlossary(enhancedContextUserRows, enhancedContextExtractedRows);
     const sourceStats = getTextStats(sourceText);
     const translationStats = getTextStats(cleanedTranslation);
+    const combinedReviewNotes = joinReviewNotes(reviewNotes);
+    const hasReviewNotes = combinedReviewNotes.trim().length > 0;
 
     const clearChunkTimers = (chunkIndex?: number) => {
         if (typeof chunkIndex === "number") {
@@ -1219,6 +1243,8 @@ function App() {
         clearChunkTimers();
         renderedChunksRef.current = [];
         setTranslation("");
+        setReviewNotes([]);
+        setShowReviewNotesModal(false);
         resetOverallProgressEstimate();
         refreshChunkPresentation();
         if (reviewOverlayTimerRef.current !== null) {
@@ -1243,6 +1269,24 @@ function App() {
                 reviewOverlayTimerRef.current = null;
             }, 180);
         }, 2200);
+    };
+
+    const cacheReviewNote = (chunkIndex: number, text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) {
+            return;
+        }
+        setReviewNotes(prev => {
+            const next = [...prev];
+            const existingIndex = next.findIndex(note => note.chunkIndex === chunkIndex);
+            const nextNote = { chunkIndex, text: trimmed };
+            if (existingIndex >= 0) {
+                next[existingIndex] = nextNote;
+            } else {
+                next.push(nextNote);
+            }
+            return next.sort((a, b) => a.chunkIndex - b.chunkIndex);
+        });
     };
 
     const setRenderedChunk = (chunkIndex: number, nextChunk: RenderedChunkState) => {
@@ -1959,6 +2003,7 @@ function App() {
                 skeletonHiding: false,
             };
             if ((payload.phase || "").toLowerCase() === "review") {
+                cacheReviewNote(chunkIndex, nextText);
                 showReviewOverlay(nextText);
             } else if ((payload.phase || "").toLowerCase() === "final") {
                 streamChunkToFinal(chunkIndex, nextText);
@@ -2405,6 +2450,7 @@ function App() {
                                     skeletonHiding: false,
                                 };
                                 if ((data?.phase || "").toLowerCase() === "review") {
+                                    cacheReviewNote(chunkIndex, nextText);
                                     showReviewOverlay(nextText);
                                 } else if ((data?.phase || "").toLowerCase() === "final") {
                                     streamChunkToFinal(chunkIndex, nextText);
@@ -2817,6 +2863,40 @@ function App() {
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not copy translation: ${String(err)}`);
+        }
+    };
+
+    const handleCopyReviewNotes = async () => {
+        try {
+            if (!combinedReviewNotes) {
+                announceAction("There are no review notes to copy.");
+                return;
+            }
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(combinedReviewNotes);
+                    announceAction("Copied review notes to clipboard.");
+                    return;
+                } catch (clipboardErr) {
+                    console.warn("Navigator clipboard write failed, falling back.", clipboardErr);
+                }
+            }
+
+            const domCopyWorked = await copyTextWithDomFallback(combinedReviewNotes);
+            if (domCopyWorked) {
+                announceAction("Copied review notes to clipboard.");
+                return;
+            }
+
+            const ok = await ClipboardSetText(combinedReviewNotes);
+            if (ok) {
+                announceAction("Copied review notes to clipboard.");
+            } else {
+                announceAction("Could not copy review notes to clipboard.");
+            }
+        } catch (err: any) {
+            console.error(err);
+            setStatusMessage(`Could not copy review notes: ${String(err)}`);
         }
     };
 
@@ -3382,6 +3462,9 @@ function App() {
                                 <button onClick={handleOpenTranslationSearchModal} title="Search Translation">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>search</span>
                                 </button>
+                                <button onClick={() => setShowReviewNotesModal(true)} title="Open Review Notes" disabled={!hasReviewNotes}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>summarize</span>
+                                </button>
                                 <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>pageview</span>
                                 </button>
@@ -3646,6 +3729,9 @@ function App() {
                                     <button className="icon-btn" onClick={handleOpenTranslationSearchModal} title="Search Translation">
                                         <span className="material-symbols-outlined">search</span>
                                     </button>
+                                    <button className="icon-btn" onClick={() => setShowReviewNotesModal(true)} title="Open Review Notes" disabled={!hasReviewNotes}>
+                                        <span className="material-symbols-outlined">summarize</span>
+                                    </button>
                                     <button className="icon-btn" onClick={handleSaveFile} title="Save to File">
                                         <span className="material-symbols-outlined">save</span>
                                     </button>
@@ -3678,6 +3764,36 @@ function App() {
                                             <span className="material-symbols-outlined">close</span>
                                         </button>
                                     </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {showReviewNotesModal && (
+                    <div className="modal-overlay modal-overlay-centered" onClick={() => setShowReviewNotesModal(false)}>
+                        <div className="modal-card modal-card-wide review-notes-modal" onClick={e => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <div>
+                                    <div className="modal-title">Review Notes</div>
+                                    <div className="modal-subtitle">All review notes generated during this translation.</div>
+                                </div>
+                                <div className="modal-header-actions">
+                                    <button className="icon-btn" onClick={handleCopyReviewNotes} title="Copy Review Notes" disabled={!hasReviewNotes}>
+                                        <span className="material-symbols-outlined">copy_all</span>
+                                    </button>
+                                    <button className="icon-btn" onClick={() => setShowReviewNotesModal(false)} title="Close">
+                                        <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="modal-body review-notes-modal-body">
+                                {hasReviewNotes ? (
+                                    <div className="markdown-output review-notes-content" style={{ fontSize: `${editorFontSize}px` }}>
+                                        {renderMarkdown(formatReviewOverlayText(combinedReviewNotes))}
+                                    </div>
+                                ) : (
+                                    <div className="review-notes-empty" style={{ fontSize: `${editorFontSize}px` }}>No review notes generated for this translation yet.</div>
                                 )}
                             </div>
                         </div>
