@@ -68,21 +68,21 @@ We provide custom build scripts for each platform to handle advanced signing, na
 
 #### macOS
 ```bash
-chmod +x build-mac.sh
-./build-mac.sh
+chmod +x build-macOS.sh
+./build-macOS.sh
 ```
 *Generates a signed `DKST Translator AI.app` in `build/bin/`.*
 
 #### Windows
 ```batch
-build-win.bat
+build-Windows.bat
 ```
 *Generates `DKST Translator AI.exe` with embedded version info and icon.*
 
 #### Linux
 ```bash
-chmod +x build-linux.sh
-./build-linux.sh
+chmod +x build-Linux.sh
+./build-Linux.sh
 ```
 *Handles dependencies and WebKit2GTK versioning automatically.*
 

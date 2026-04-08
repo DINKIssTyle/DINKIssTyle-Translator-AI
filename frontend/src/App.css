@@ -1728,6 +1728,21 @@ textarea {
   gap: 8px;
 }
 
+.modal-header-stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.modal-header-actions-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+  align-self: flex-end;
+}
+
 .modal-ok-btn {
   min-width: 44px;
   min-height: 38px;
@@ -2131,6 +2146,22 @@ textarea {
     padding: 16px 16px 12px;
     align-items: flex-start;
     gap: 12px;
+  }
+
+  .modal-header-toolbar {
+    align-items: flex-start;
+    flex-wrap: nowrap;
+  }
+
+  .modal-header-toolbar > .modal-header-actions:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+
+  .modal-header-actions-end {
+    margin-left: auto;
+    flex: 0 0 auto;
   }
 
   .modal-title {

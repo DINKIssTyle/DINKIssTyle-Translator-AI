@@ -1,11 +1,12 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "DKST-Translator-AI",
-  "outputfilename": "DKST-Translator-AI",
+  "name": "DKST Translator AI",
+  "outputfilename": "DKST Translator AI",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "bundleid": "com.dinkisstyle.translatorai",
   "author": {
     "name": "DINKIssTyle",
     "email": "162435433+DINKIssTyle@users.noreply.github.com"
@@ -13,6 +14,6 @@
   "info": {
     "productName": "DKST Translator AI",
     "productVersion": "1.0.0",
-    "copyright": "Copyright (C) 2026 DINKIssTyle. All rights reserved."
+    "copyright": "Copyright (C) 2026 DINKI'ssTyle. All rights reserved."
   }
 }

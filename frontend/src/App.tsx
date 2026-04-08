@@ -3752,9 +3752,9 @@ function App() {
                 {showSourceEditorModal && (
                     <div className="modal-overlay modal-overlay-centered modal-overlay-fullscreen" onClick={handleCloseSourceEditorModal}>
                         <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
-                            <div className="modal-header">
+                            <div className="modal-header modal-header-stacked">
                                 <div className="modal-title">Edit Source Text</div>
-                                <div className="modal-header-actions">
+                                <div className="modal-header-actions modal-header-actions-wrap">
                                     <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
                                         <span className="material-symbols-outlined">remove</span>
                                     </button>
@@ -3791,9 +3791,9 @@ function App() {
                 {showTranslationViewerModal && (
                     <div className="modal-overlay modal-overlay-centered modal-overlay-fullscreen" onClick={handleCloseTranslationViewerModal}>
                         <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
-                            <div className="modal-header">
+                            <div className="modal-header modal-header-stacked">
                                 <div className="modal-title">Translation Preview</div>
-                                <div className="modal-header-actions">
+                                <div className="modal-header-actions modal-header-actions-wrap">
                                     <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
                                         <span className="material-symbols-outlined">remove</span>
                                     </button>

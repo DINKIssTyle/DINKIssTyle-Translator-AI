@@ -5,10 +5,8 @@ set -e
 
 # Configuration
 PRODUCT_NAME="DKST Translator AI"
-INTERNAL_NAME="DKST-Translator-AI"
 BUILD_DIR="build/bin"
 APP_BUNDLE="$BUILD_DIR/$PRODUCT_NAME.app"
-WAILS_BUNDLE="$BUILD_DIR/$INTERNAL_NAME.app"
 ENTITLEMENTS="build/darwin/entitlements.plist"
 
 echo "=== Starting macOS Build Process ==="
@@ -16,8 +14,7 @@ echo "=== Starting macOS Build Process ==="
 # 1. Environment Cleanup and Tool Verification
 echo "[1/5] Cleaning up environment and checking tools..."
 rm -rf "$APP_BUNDLE"
-rm -rf "$WAILS_BUNDLE"
-rm -f "$BUILD_DIR/$INTERNAL_NAME"
+rm -f "$BUILD_DIR/$PRODUCT_NAME"
 mkdir -p "$BUILD_DIR"
 
 if ! command -v wails &> /dev/null; then
@@ -35,20 +32,15 @@ popd
 
 # 3. Build with Wails (using universal binary for modern Macs)
 echo "[3/5] Building application with Wails..."
-wails build -platform darwin/universal -ldflags "-s -w" -v 2
+wails build -platform darwin/universal -ldflags "-s -w" -v 2 -o "$PRODUCT_NAME"
 
-# 4. Rename Bundle and Binary for Production (Addressing spaces requirement)
-echo "[4/5] Customizing application name with spaces..."
-if [ -d "$WAILS_BUNDLE" ]; then
-    mv "$WAILS_BUNDLE" "$APP_BUNDLE"
-    mv "$APP_BUNDLE/Contents/MacOS/$INTERNAL_NAME" "$APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
-    
-    # Update Info.plist
-    # CFBundleExecutable and CFBundleName must match the new name
+# 4. Verify Bundle and Binary Names
+echo "[4/5] Verifying application name..."
+if [ -d "$APP_BUNDLE" ]; then
     plutil -replace CFBundleExecutable -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
     plutil -replace CFBundleName -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
 else
-    echo "Error: Application bundle not found at $WAILS_BUNDLE"
+    echo "Error: Application bundle not found at $APP_BUNDLE"
     exit 1
 fi
 

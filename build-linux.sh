@@ -5,7 +5,6 @@ set -e
 
 # Configuration
 PRODUCT_NAME="DKST Translator AI"
-INTERNAL_NAME="DKST-Translator-AI"
 BUILD_DIR="build/bin"
 
 echo "=== Starting Linux Build Process ==="
@@ -13,7 +12,7 @@ echo "=== Starting Linux Build Process ==="
 # 1. Environment Cleanup and Tool Verification
 echo "[1/4] Cleaning up environment and checking tools..."
 rm -rf "$BUILD_DIR/$PRODUCT_NAME"
-rm -f "$BUILD_DIR/$INTERNAL_NAME"
+rm -f "$BUILD_DIR/$PRODUCT_NAME"
 mkdir -p "$BUILD_DIR"
 
 if ! command -v wails &> /dev/null; then
@@ -56,14 +55,7 @@ npm run build
 popd
 
 # 4. Build with Wails and Manual Rename
-echo "[4/4] Building application with Wails and renaming to '$PRODUCT_NAME'..."
-wails build -platform linux/amd64 $BUILD_TAGS -ldflags "-s -w" -v 2
-
-# Rename binary to include spaces
-if [ -f "$BUILD_DIR/$INTERNAL_NAME" ]; then
-    mv "$BUILD_DIR/$INTERNAL_NAME" "$BUILD_DIR/$PRODUCT_NAME"
-else
-    echo "Warning: Binary '$INTERNAL_NAME' not found in $BUILD_DIR"
-fi
+echo "[4/4] Building application with Wails as '$PRODUCT_NAME'..."
+wails build -platform linux/amd64 $BUILD_TAGS -ldflags "-s -w" -v 2 -o "$PRODUCT_NAME"
 
 echo "=== Build Complete: $BUILD_DIR/$PRODUCT_NAME ==="
