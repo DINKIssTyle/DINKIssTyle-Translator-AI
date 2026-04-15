@@ -94,6 +94,7 @@ select,
 input,
 textarea {
   font: inherit;
+  font-size: 0.88rem;
 }
 
 .no-select {
@@ -252,10 +253,16 @@ input,
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .model-group {
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
+}
+
+.toolbar-group > * {
+  min-width: 0;
 }
 
 .instruction-group {
@@ -276,7 +283,9 @@ input,
 
 select,
 input {
-  border-radius: 10px;
+  font-size: 0.88rem;
+  min-height: 28px;
+  border-radius: 6px;
   border: 1px solid var(--line);
   background: var(--surface-muted);
   color: var(--text-main);
@@ -1858,12 +1867,23 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.settings-field > input,
+.settings-field > select,
+.settings-field > .toolbar-group,
+.settings-field > .settings-inline-action,
+.settings-field > .settings-note {
+  width: 100%;
 }
 
 .settings-inline-action {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .settings-inline-action input {
@@ -1873,10 +1893,10 @@ textarea {
 
 .settings-field span {
   color: var(--text-soft);
-  font-size: 0.82rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  /* text-transform: uppercase; */
+  /* letter-spacing: 0.05em; */
 }
 
 .settings-checkbox {
@@ -2106,8 +2126,11 @@ textarea {
   border-radius: 12px;
   background: rgba(47, 124, 246, 0.08);
   color: var(--text-soft);
-  font-size: 0.86rem;
-  line-height: 1.45;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 900px) {
@@ -2153,7 +2176,7 @@ textarea {
     flex-wrap: nowrap;
   }
 
-  .modal-header-toolbar > .modal-header-actions:first-child {
+  .modal-header-toolbar>.modal-header-actions:first-child {
     min-width: 0;
     flex: 1 1 auto;
     flex-wrap: wrap;
