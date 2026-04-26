@@ -321,8 +321,10 @@ function loadStoredSettings() {
 async function callBrowserJSON<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(path, {
         ...init,
+        cache: init?.cache || "no-store",
         headers: {
             "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
             ...(init?.headers || {}),
         },
     });
