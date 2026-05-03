@@ -234,6 +234,11 @@ const INSTRUCTION_PRESETS = [
         instruction: "Translate with a focus on information technology and software development. Use industry-standard technical terms (e.g., UI/UX, API, cloud computing) accurately. Maintain a modern, tech-oriented style that is clear for both experts and users.",
     },
     {
+        id: "github",
+        label: "Github Commit Message",
+        instruction: "### Translate in GitHub commit message style ### * **Be Concise**: Eliminate unnecessary fillers, polite particles, and adverbs. Focus strictly on the action and the subject.   * ** Use Imperative Mood**: Use strong verbs and noun phrases. (e.g., 'Fix,' 'Add,' 'Update,' 'Optimize') rather than descriptive or passive sentences.   * **Maintain Context**: Use industry-standard technical terminology. No Fluff: Remove phrases like 'I have fixed...' or 'This change will help...' ",
+    },
+    {
         id: "medical",
         label: "Medical & Healthcare",
         instruction: "Prioritize high precision in medical and clinical terminology. Ensure accuracy in anatomical terms, drug names, and diagnostic descriptions. Maintain a professional, formal tone appropriate for healthcare professionals.",
