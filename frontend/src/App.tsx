@@ -1181,6 +1181,7 @@ function App() {
     const outputRef = useRef<HTMLDivElement>(null);
     const translationViewerRef = useRef<HTMLDivElement>(null);
     const translationSearchMatchesRef = useRef<HTMLElement[]>([]);
+    const sourceInputRef = useRef<HTMLTextAreaElement>(null);
     const promptInputRef = useRef<HTMLTextAreaElement>(null);
     const didHydrateSettingsRef = useRef(false);
     const progressHideTimerRef = useRef<number | null>(null);
@@ -1200,6 +1201,8 @@ function App() {
     });
     const overallProgressEstimateRef = useRef<OverallProgressEstimate>(createInitialOverallProgressEstimate());
     const translateActionRef = useRef<() => void>(() => { });
+    const copyTranslationActionRef = useRef<() => void>(() => { });
+    const swapLanguagesActionRef = useRef<() => void>(() => { });
     const openFileActionRef = useRef<() => void>(() => { });
     const latestStatsRef = useRef<TranslationStatsPayload | null>(null);
     const browserTranslateAbortRef = useRef<AbortController | null>(null);
@@ -2177,6 +2180,32 @@ function App() {
         EventsOn("menu:font-reset", () => setEditorFontSize(DEFAULT_EDITOR_FONT_SIZE));
 
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+                if (event.key === "F1") {
+                    event.preventDefault();
+                    sourceInputRef.current?.focus();
+                    return;
+                }
+
+                if (event.key === "F2") {
+                    event.preventDefault();
+                    translateActionRef.current();
+                    return;
+                }
+
+                if (event.key === "F3") {
+                    event.preventDefault();
+                    copyTranslationActionRef.current();
+                    return;
+                }
+
+                if (event.key === "F4") {
+                    event.preventDefault();
+                    swapLanguagesActionRef.current();
+                    return;
+                }
+            }
+
             const isMod = event.metaKey || event.ctrlKey;
             if (!isMod) {
                 return;
@@ -2420,6 +2449,10 @@ function App() {
 
     useEffect(() => {
         translateActionRef.current = handleTranslate;
+        copyTranslationActionRef.current = () => {
+            void handleCopyTranslation();
+        };
+        swapLanguagesActionRef.current = handleSwapLanguages;
         openFileActionRef.current = handleOpenFile;
     });
 
@@ -3527,6 +3560,7 @@ function App() {
                         </div>
                         <div className="pane-body">
                             <textarea
+                                ref={sourceInputRef}
                                 style={{ fontSize: `${editorFontSize}px` }}
                                 placeholder="Paste or open source text..."
                                 value={sourceText}
