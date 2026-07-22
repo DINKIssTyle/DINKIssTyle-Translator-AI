@@ -94,9 +94,21 @@ func (a *App) OpenFile() (string, error) {
 	return a.file.OpenFile()
 }
 
+func (a *App) OpenPDF() (file.PDFDocument, error) {
+	return a.file.OpenPDF()
+}
+
+func (a *App) CreateTranslatedPDF(req file.PDFCreateRequest) (file.PDFResult, error) {
+	return file.BuildTranslatedPDF(req)
+}
+
 // SaveFile saves text to a file
 func (a *App) SaveFile(content string) (string, error) {
 	return a.file.SaveFile(content)
+}
+
+func (a *App) SavePDF(dataBase64 string, defaultFilename string) (string, error) {
+	return a.file.SavePDF(dataBase64, defaultFilename)
 }
 
 func (a *App) ConfirmClearSource() (bool, error) {

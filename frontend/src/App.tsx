@@ -3,9 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import brandLogo from './assets/images/dskt-logo.png';
+import PDFPreview from './PDFPreview';
 import {
     CancelTranslation,
     ConfirmClearSource,
+    CreateTranslatedPDF,
     GetHostProviderSettings,
     GetWebServerSettings,
     GetWindowMode,
@@ -15,8 +17,10 @@ import {
     Translate,
     SaveWebServerSettings,
     OpenFile,
+    OpenPDF,
     ReadDebugStudioState,
     SaveFile,
+    SavePDF,
     SaveHostProviderSettings,
     WriteDebugStudioState
 } from "../wailsjs/go/app/App";
@@ -166,6 +170,41 @@ type GlossaryRow = {
     source: string;
     target: string;
     frequency?: number;
+};
+
+type PDFPageData = {
+    pageNumber: number;
+    width: number;
+    height: number;
+    text: string;
+    blocks: Array<{
+        id: string;
+        pageNumber: number;
+        blockIndex: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        fontSize: number;
+        role: "heading" | "body" | "caption" | string;
+        text: string;
+    }>;
+};
+
+type PDFDocumentData = {
+    name: string;
+    dataBase64: string;
+    pageCount: number;
+    pages: PDFPageData[];
+    sourceText: string;
+    extractedLength: number;
+};
+
+type PDFResultData = {
+    name: string;
+    dataBase64: string;
+    pageCount: number;
+    warning?: string;
 };
 
 const STORAGE_KEY = "dkst-translator-ai-settings";
@@ -1096,6 +1135,10 @@ function App() {
     const isDebugStudioWindow = windowMode === "debug-studio";
     const [sourceText, setSourceText] = useState("");
     const [translation, setTranslation] = useState("");
+    const [pdfDocument, setPDFDocument] = useState<PDFDocumentData | null>(null);
+    const [translatedPDF, setTranslatedPDF] = useState<PDFResultData | null>(null);
+    const [isBuildingTranslatedPDF, setIsBuildingTranslatedPDF] = useState(false);
+    const [translationCompletionID, setTranslationCompletionID] = useState(0);
     const [isTranslating, setIsTranslating] = useState(false);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [models, setModels] = useState<ModelInfo[]>([]);
@@ -1207,6 +1250,7 @@ function App() {
     const latestStatsRef = useRef<TranslationStatsPayload | null>(null);
     const browserTranslateAbortRef = useRef<AbortController | null>(null);
     const translationRunIdRef = useRef(0);
+    const translatedPDFBuildIDRef = useRef(0);
     const reviewOverlayTimerRef = useRef<number | null>(null);
     const reviewOverlayBodyRef = useRef<HTMLDivElement>(null);
     const reviewOverlayScrollFrameRef = useRef<number | null>(null);
@@ -1223,9 +1267,15 @@ function App() {
     const showReasoningControl = supportsReasoning || providerSettings.forceShowReasoning;
     const showTemperatureControl = providerSettings.forceShowTemperature;
     const cleanedTranslation = sanitizeTranslation(translation);
+    const readableTranslation = pdfDocument
+        ? cleanedTranslation
+            .replace(/^\s*\[\[DKST_PDF_(?:PAGE:\d+|BLOCK:\d+:\d+)\]\]\s*$/gm, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
+        : cleanedTranslation;
     const enhancedContextDraftGlossary = buildCombinedGlossary(enhancedContextUserRows, enhancedContextExtractedRows);
     const sourceStats = getTextStats(sourceText);
-    const translationStats = getTextStats(cleanedTranslation);
+    const translationStats = getTextStats(readableTranslation);
     const combinedReviewNotes = joinReviewNotes(reviewNotes);
     const hasReviewNotes = combinedReviewNotes.trim().length > 0;
 
@@ -2112,7 +2162,8 @@ function App() {
         EventsOn("translation:complete", (payload: TranslationCompletePayload) => {
             clearAllDraftSkeletons();
             const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
-            setTranslation(renderedChunkText || payload.text || "");
+            setTranslation(payload.text || renderedChunkText || "");
+            setTranslationCompletionID(value => value + 1);
             smoothScrollTranslationToBottom({ force: true });
             setStatusMessage(formatCompletionStats(latestStatsRef.current));
             if (progressHideTimerRef.current !== null) {
@@ -2278,6 +2329,35 @@ function App() {
             clearChunkTimers();
         };
     }, [isDebugStudioWindow]);
+
+    useEffect(() => {
+        if (isBrowserMode || !pdfDocument || !translationCompletionID || !cleanedTranslation.trim()) {
+            return;
+        }
+        const buildID = translatedPDFBuildIDRef.current + 1;
+        translatedPDFBuildIDRef.current = buildID;
+        setIsBuildingTranslatedPDF(true);
+        setTranslatedPDF(null);
+        setStatusMessage("Building translated PDF preview...");
+        void CreateTranslatedPDF({
+            sourceName: pdfDocument.name,
+            sourceDataBase64: pdfDocument.dataBase64,
+            pages: pdfDocument.pages,
+            translatedText: cleanedTranslation,
+        } as any).then((result: PDFResultData) => {
+            if (translatedPDFBuildIDRef.current !== buildID) return;
+            setTranslatedPDF(result);
+            setStatusMessage(result.warning || `Translated PDF ready (${result.pageCount} pages).`);
+        }).catch((error: any) => {
+            if (translatedPDFBuildIDRef.current !== buildID) return;
+            console.error("Could not build translated PDF:", error);
+            setStatusMessage(`Could not build translated PDF: ${String(error)}`);
+        }).finally(() => {
+            if (translatedPDFBuildIDRef.current === buildID) {
+                setIsBuildingTranslatedPDF(false);
+            }
+        });
+    }, [translationCompletionID]);
 
     useEffect(() => {
         if (isBrowserMode) {
@@ -2510,6 +2590,11 @@ function App() {
         translationRunIdRef.current = runID;
         const isActiveRun = () => translationRunIdRef.current === runID;
         resetTranslationPresentation();
+        if (pdfDocument) {
+            translatedPDFBuildIDRef.current += 1;
+            setTranslatedPDF(null);
+            setIsBuildingTranslatedPDF(false);
+        }
         setLastTopicAwareHintsPreview("");
 
         const runTranslation = async (settings: ProviderSettings) => {
@@ -2522,6 +2607,7 @@ function App() {
                 sourceLang,
                 targetLang,
                 instruction,
+                documentType: pdfDocument ? "pdf" : "",
             });
             if (isBrowserMode) {
                 browserTranslateAbortRef.current?.abort();
@@ -2591,7 +2677,8 @@ function App() {
                             if (event === "complete") {
                                 clearAllDraftSkeletons();
                                 const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
-                                setTranslation(renderedChunkText || data?.text || "");
+                                setTranslation(data?.text || renderedChunkText || "");
+                                setTranslationCompletionID(value => value + 1);
                                 smoothScrollTranslationToBottom({ force: true });
                                 if (progressHideTimerRef.current !== null) {
                                     window.clearTimeout(progressHideTimerRef.current);
@@ -2845,11 +2932,40 @@ function App() {
         try {
             const content = await OpenFile();
             if (content) {
+                if (pdfDocument) resetTranslationPresentation();
+                setPDFDocument(null);
+                setTranslatedPDF(null);
                 setSourceText(content);
                 announceAction("Loaded file content into the source editor.");
             }
         } catch (err: any) {
             console.error(err);
+        }
+    };
+
+    const handleOpenPDF = async () => {
+        if (isBrowserMode) {
+            announceAction("Opening PDF documents is currently available in the desktop app.");
+            return;
+        }
+        if (isTranslating) {
+            announceAction("Cancel the active translation before opening another PDF.");
+            return;
+        }
+        try {
+            const document = await OpenPDF() as PDFDocumentData;
+            if (!document?.dataBase64) return;
+            resetTranslationPresentation();
+            translatedPDFBuildIDRef.current += 1;
+            setTranslatedPDF(null);
+            setPDFDocument(document);
+            setSourceText(document.sourceText || "");
+            setStatusMessage(`Loaded ${document.name} (${document.pageCount} pages).`);
+            announceAction(`Loaded PDF: ${document.name}`);
+        } catch (err: any) {
+            console.error(err);
+            setStatusMessage(`Could not open PDF: ${String(err)}`);
+            alert("Could not open PDF: " + err);
         }
     };
 
@@ -2861,7 +2977,10 @@ function App() {
                     announceAction("Clipboard is empty.");
                     return;
                 }
+                if (pdfDocument) resetTranslationPresentation();
                 setSourceText(content);
+                setPDFDocument(null);
+                setTranslatedPDF(null);
                 announceAction("Pasted clipboard text into the source editor.");
                 return;
             }
@@ -2870,7 +2989,10 @@ function App() {
                 announceAction("Clipboard is empty.");
                 return;
             }
+            if (pdfDocument) resetTranslationPresentation();
             setSourceText(content);
+            setPDFDocument(null);
+            setTranslatedPDF(null);
             announceAction("Pasted clipboard text into the source editor.");
         } catch (err: any) {
             console.error(err);
@@ -2892,7 +3014,11 @@ function App() {
                 announceAction("Kept the source text.");
                 return;
             }
+            if (pdfDocument) resetTranslationPresentation();
             setSourceText("");
+            setPDFDocument(null);
+            setTranslatedPDF(null);
+            translatedPDFBuildIDRef.current += 1;
             announceAction("Cleared the source editor.");
         } catch (err: any) {
             console.error(err);
@@ -2921,6 +3047,20 @@ function App() {
     };
 
     const handleSaveFile = async () => {
+        if (pdfDocument) {
+            if (!translatedPDF?.dataBase64) {
+                announceAction("Translate the PDF before saving it.");
+                return;
+            }
+            try {
+                const savedPath = await SavePDF(translatedPDF.dataBase64, translatedPDF.name);
+                if (savedPath) announceAction(`Saved translated PDF to: ${savedPath}`);
+            } catch (err: any) {
+                console.error(err);
+                setStatusMessage(`Could not save translated PDF: ${String(err)}`);
+            }
+            return;
+        }
         if (isBrowserMode) {
             try {
                 const blob = new Blob([cleanedTranslation], { type: "text/plain;charset=utf-8" });
@@ -2949,13 +3089,13 @@ function App() {
 
     const handleCopyTranslation = async () => {
         try {
-            if (!cleanedTranslation) {
+            if (!readableTranslation) {
                 announceAction("There is no translated text to copy.");
                 return;
             }
             if (navigator.clipboard?.writeText) {
                 try {
-                    await navigator.clipboard.writeText(cleanedTranslation);
+                    await navigator.clipboard.writeText(readableTranslation);
                     announceAction("Copied translation to clipboard.");
                     return;
                 } catch (clipboardErr) {
@@ -2963,13 +3103,13 @@ function App() {
                 }
             }
 
-            const domCopyWorked = await copyTextWithDomFallback(cleanedTranslation);
+            const domCopyWorked = await copyTextWithDomFallback(readableTranslation);
             if (domCopyWorked) {
                 announceAction("Copied translation to clipboard.");
                 return;
             }
 
-            const ok = await ClipboardSetText(cleanedTranslation);
+            const ok = await ClipboardSetText(readableTranslation);
             if (ok) {
                 announceAction("Copied translation to clipboard.");
             } else {
@@ -3547,26 +3687,36 @@ function App() {
                                 <button onClick={handleClearSource} title="Clear Source" disabled={!sourceText}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete_sweep</span>
                                 </button>
-                                <button onClick={handlePasteSource} title="Paste Source">
+                                <button onClick={handlePasteSource} title="Paste Source" disabled={Boolean(pdfDocument)}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>content_paste_go</span>
                                 </button>
-                                <button onClick={handleOpenSourceEditorModal} title="Open Source Editor">
+                                <button onClick={handleOpenSourceEditorModal} title="Open Source Editor" disabled={Boolean(pdfDocument)}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>edit_note</span>
                                 </button>
                                 <button onClick={handleOpenFile} title="Open File">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
                                 </button>
+                                <button onClick={handleOpenPDF} title="Open PDF" disabled={isTranslating}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>picture_as_pdf</span>
+                                </button>
                             </div>
                         </div>
                         <div className="pane-body">
-                            <textarea
-                                ref={sourceInputRef}
-                                style={{ fontSize: `${editorFontSize}px` }}
-                                placeholder="Paste or open source text..."
-                                value={sourceText}
-                                onChange={e => setSourceText(e.target.value)}
-                            />
-                            <div className="pane-stats">{sourceStats}</div>
+                            {pdfDocument ? (
+                                <PDFPreview
+                                    dataBase64={pdfDocument.dataBase64}
+                                    documentName={pdfDocument.name}
+                                />
+                            ) : (
+                                <textarea
+                                    ref={sourceInputRef}
+                                    style={{ fontSize: `${editorFontSize}px` }}
+                                    placeholder="Paste or open source text..."
+                                    value={sourceText}
+                                    onChange={e => setSourceText(e.target.value)}
+                                />
+                            )}
+                            <div className="pane-stats">{pdfDocument ? `${pdfDocument.pageCount} pages · ${sourceStats}` : sourceStats}</div>
                         </div>
                     </div>
 
@@ -3577,21 +3727,39 @@ function App() {
                                 <button onClick={handleCopyTranslation} title="Copy Translation">
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>copy_all</span>
                                 </button>
-                                <button onClick={handleOpenTranslationSearchModal} title="Search Translation">
+                                <button onClick={handleOpenTranslationSearchModal} title="Search Translation" disabled={Boolean(pdfDocument)}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>search</span>
                                 </button>
                                 <button onClick={() => setShowReviewNotesModal(true)} title="Open Review Notes" disabled={!hasReviewNotes}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>summarize</span>
                                 </button>
-                                <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer">
+                                <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer" disabled={Boolean(pdfDocument)}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>pageview</span>
                                 </button>
-                                <button onClick={handleSaveFile} title="Save to File">
+                                <button onClick={handleSaveFile} title={pdfDocument ? "Save Translated PDF" : "Save to File"} disabled={Boolean(pdfDocument && !translatedPDF)}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>save</span>
                                 </button>
                             </div>
                         </div>
                         <div className="pane-body">
+                            {pdfDocument ? (
+                                translatedPDF ? (
+                                    <PDFPreview
+                                        dataBase64={translatedPDF.dataBase64}
+                                        documentName={translatedPDF.name}
+                                    />
+                                ) : (
+                                    <div className="pdf-translation-placeholder">
+                                        <span className="material-symbols-outlined">picture_as_pdf</span>
+                                        <strong>{isBuildingTranslatedPDF ? "Building translated PDF" : isTranslating ? "Translating PDF" : "Translated PDF preview"}</strong>
+                                        <span>{isBuildingTranslatedPDF
+                                            ? "Laying out translated pages..."
+                                            : isTranslating
+                                                ? "Page flow and terminology are being carried across the document."
+                                                : "Press Translate to create a translated PDF."}</span>
+                                    </div>
+                                )
+                            ) : (
                             <div className="translation-output markdown-output" ref={outputRef} onCopy={handleTranslationCopyEvent} style={{ fontSize: `${editorFontSize}px` }}>
                                 {shouldRenderLayeredChunks ? (
                                     <div className="translation-stream-layered" data-version={chunkPresentationVersion}>
@@ -3628,7 +3796,8 @@ function App() {
                                     </>
                                 )}
                             </div>
-                            {translationSearchQuery && translationSearchMatchCount > 0 && (
+                            )}
+                            {!pdfDocument && translationSearchQuery && translationSearchMatchCount > 0 && (
                                 <div className="translation-search-nav" role="status" aria-live="polite">
                                     <button type="button" onClick={() => handleMoveTranslationSearch("prev")} title="Previous match">
                                         <span className="material-symbols-outlined">arrow_upward</span>

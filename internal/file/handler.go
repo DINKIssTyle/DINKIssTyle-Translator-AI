@@ -6,15 +6,17 @@ import (
 	"context"
 	"os"
 
+	"dinkisstyle-translator/internal/pdfengine"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type FileHandler struct {
-	ctx context.Context
+	ctx       context.Context
+	pdfEngine pdfengine.Engine
 }
 
 func NewFileHandler() *FileHandler {
-	return &FileHandler{}
+	return &FileHandler{pdfEngine: newCleanroomPDFEngine()}
 }
 
 func (f *FileHandler) SetContext(ctx context.Context) {

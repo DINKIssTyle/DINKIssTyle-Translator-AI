@@ -10,6 +10,10 @@ export function ConfirmClearSource() {
   return window['go']['app']['App']['ConfirmClearSource']();
 }
 
+export function CreateTranslatedPDF(arg1) {
+  return window['go']['app']['App']['CreateTranslatedPDF'](arg1);
+}
+
 export function GetHostProviderSettings() {
   return window['go']['app']['App']['GetHostProviderSettings']();
 }
@@ -38,6 +42,10 @@ export function OpenFile() {
   return window['go']['app']['App']['OpenFile']();
 }
 
+export function OpenPDF() {
+  return window['go']['app']['App']['OpenPDF']();
+}
+
 export function ReadDebugStudioState() {
   return window['go']['app']['App']['ReadDebugStudioState']();
 }
@@ -48,6 +56,10 @@ export function SaveFile(arg1) {
 
 export function SaveHostProviderSettings(arg1) {
   return window['go']['app']['App']['SaveHostProviderSettings'](arg1);
+}
+
+export function SavePDF(arg1, arg2) {
+  return window['go']['app']['App']['SavePDF'](arg1, arg2);
 }
 
 export function SaveWebServerSettings(arg1) {

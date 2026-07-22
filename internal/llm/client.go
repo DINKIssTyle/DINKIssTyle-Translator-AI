@@ -18,14 +18,17 @@ import (
 )
 
 var (
-	wikiCitationPattern      = regexp.MustCompile(`\[(\d+)\]`)
-	multiSpacePattern        = regexp.MustCompile(`[ \t]{2,}`)
-	spaceBeforePunctPattern  = regexp.MustCompile(`\s+([,.;:!?])`)
-	protectedTermPattern     = regexp.MustCompile(`\b(?:[A-Z][a-z]+(?:[\s-]+[A-Z][a-z]+)+|[A-Z]{2,}(?:[-/][A-Z0-9]{2,})*|[A-Z][a-zA-Z0-9]+(?:[-/][A-Za-z0-9]+)+)\b`)
-	glossaryBlockPattern     = regexp.MustCompile(`(?s)\n?(?:Use the following User Glossary.*?\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?|User Glossary:\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?)`)
-	emptyDebugSectionPattern = regexp.MustCompile(`(?m)^(Protected names and terms|User glossary|Chunk label|Previous context|Opening source paragraph|Opening translated paragraph|Recent overlap):\n(?:[ \t]*\n)?`)
-	inlineProofreadPattern   = regexp.MustCompile(`(?is)\{draft:\s*(.*?)\s*\}\s*\{review:\s*(.*?)\s*\}\s*\{final:\s*(.*?)\s*\}\s*$`)
-	fencedCodeBlockPattern   = regexp.MustCompile("(?s)^```[a-zA-Z0-9_-]*\\s*(.*?)\\s*```$")
+	wikiCitationPattern       = regexp.MustCompile(`\[(\d+)\]`)
+	multiSpacePattern         = regexp.MustCompile(`[ \t]{2,}`)
+	spaceBeforePunctPattern   = regexp.MustCompile(`\s+([,.;:!?])`)
+	protectedTermPattern      = regexp.MustCompile(`\b(?:[A-Z][a-z]+(?:[\s-]+[A-Z][a-z]+)+|[A-Z]{2,}(?:[-/][A-Z0-9]{2,})*|[A-Z][a-zA-Z0-9]+(?:[-/][A-Za-z0-9]+)+)\b`)
+	glossaryBlockPattern      = regexp.MustCompile(`(?s)\n?(?:Use the following User Glossary.*?\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?|User Glossary:\n<GLOSSARY>\n.*?\n</GLOSSARY>\n?)`)
+	emptyDebugSectionPattern  = regexp.MustCompile(`(?m)^(Protected names and terms|User glossary|Chunk label|Previous context|Opening source paragraph|Opening translated paragraph|Recent overlap):\n(?:[ \t]*\n)?`)
+	inlineProofreadPattern    = regexp.MustCompile(`(?is)\{draft:\s*(.*?)\s*\}\s*\{review:\s*(.*?)\s*\}\s*\{final:\s*(.*?)\s*\}\s*$`)
+	fencedCodeBlockPattern    = regexp.MustCompile("(?s)^```[a-zA-Z0-9_-]*\\s*(.*?)\\s*```$")
+	pdfPageMarkerLinePattern  = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_PAGE:\d+\]\]\s*$`)
+	pdfBlockMarkerLinePattern = regexp.MustCompile(`(?m)^\s*(\[\[DKST_PDF_BLOCK:\d+:\d+\]\])\s*$`)
+	pdfBlockRoleLinePattern   = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_ROLE:(heading|body|caption)\]\]\s*$`)
 )
 
 type Client struct {
@@ -129,11 +132,12 @@ type ProviderSettings struct {
 }
 
 type TranslationRequest struct {
-	Settings    ProviderSettings `json:"settings"`
-	SourceText  string           `json:"sourceText"`
-	SourceLang  string           `json:"sourceLang"`
-	TargetLang  string           `json:"targetLang"`
-	Instruction string           `json:"instruction"`
+	Settings     ProviderSettings `json:"settings"`
+	SourceText   string           `json:"sourceText"`
+	SourceLang   string           `json:"sourceLang"`
+	TargetLang   string           `json:"targetLang"`
+	Instruction  string           `json:"instruction"`
+	DocumentType string           `json:"documentType,omitempty"`
 }
 
 type modelsResponse struct {
@@ -224,6 +228,7 @@ type translationRuntimeOptions struct {
 	OverallProgressBase        float64
 	OverallProgressSpan        float64
 	ProgressMetrics            progressMetrics
+	PreservePDFPageMarkers     bool
 }
 
 type inlineProofreadResult struct {
@@ -353,15 +358,23 @@ func (p chunkPlanner) plan(reqData TranslationRequest) plannedTranslation {
 	}
 
 	chunks := []smartChunk{{Text: strings.TrimSpace(reqData.SourceText)}}
-	if reqData.Settings.EnableSmartChunking {
+	if strings.EqualFold(reqData.DocumentType, "pdf") {
+		if pdfChunks := buildPDFBlockChunks(reqData.SourceText, chunkSize, reqData.Settings.EnableSmartChunking); len(pdfChunks) > 0 {
+			chunks = pdfChunks
+		}
+	} else if reqData.Settings.EnableSmartChunking {
 		chunks = buildSmartChunks(reqData.SourceText, chunkSize)
 	}
 	_, _ = chunkCharacterStats(chunks)
+	openingSource := strings.TrimSpace(reqData.SourceText)
+	if len(chunks) > 0 {
+		openingSource = chunks[0].Text
+	}
 
 	return plannedTranslation{
 		chunkSize:              chunkSize,
 		chunks:                 chunks,
-		openingSourceParagraph: leadingParagraph(reqData.SourceText, 420),
+		openingSourceParagraph: leadingParagraph(openingSource, 420),
 	}
 }
 
@@ -584,6 +597,7 @@ func (p inlineProofreadPass) apply(reqData TranslationRequest, options translati
 type contextMemory struct {
 	settings                   ProviderSettings
 	instruction                string
+	documentType               string
 	separatePostEditPass       bool
 	previousSummary            string
 	openingSourceParagraph     string
@@ -594,15 +608,24 @@ func newContextMemory(reqData TranslationRequest, openingSourceParagraph string,
 	return &contextMemory{
 		settings:               reqData.Settings,
 		instruction:            reqData.Instruction,
+		documentType:           reqData.DocumentType,
 		separatePostEditPass:   separatePostEditPass,
 		openingSourceParagraph: openingSourceParagraph,
 	}
 }
 
 func (m *contextMemory) runtimeOptions(chunk smartChunk, currentChunk int, totalChunks int) translationRuntimeOptions {
+	chunkLabel := fmt.Sprintf("Chunk %d/%d", currentChunk, totalChunks)
+	if chunk.PDFBlockMarker != "" {
+		role := strings.TrimSpace(chunk.PDFBlockRole)
+		if role == "" {
+			role = "text"
+		}
+		chunkLabel = fmt.Sprintf("PDF %s block %d/%d", role, currentChunk, totalChunks)
+	}
 	return translationRuntimeOptions{
 		ContextSummary:             m.previousSummary,
-		ChunkLabel:                 fmt.Sprintf("Chunk %d/%d", currentChunk, totalChunks),
+		ChunkLabel:                 chunkLabel,
 		CurrentChunkIndex:          currentChunk,
 		TotalChunks:                totalChunks,
 		OverlapContext:             chunk.OverlapContext,
@@ -610,6 +633,23 @@ func (m *contextMemory) runtimeOptions(chunk smartChunk, currentChunk int, total
 		OpeningTranslatedParagraph: m.openingTranslatedParagraph,
 		ProgressMetrics:            buildProgressMetrics(totalChunks, currentChunk, m.separatePostEditPass, "translate"),
 		OverallProgressBase:        derefFloat(overallPassProgress(totalChunks, currentChunk, m.separatePostEditPass, "translate")),
+		PreservePDFPageMarkers:     strings.EqualFold(m.documentType, "pdf") && chunk.PDFBlockMarker == "",
+	}
+}
+
+func appendPDFBoxTranslationConstraint(builder *strings.Builder, chunkLabel string) {
+	label := strings.ToLower(strings.TrimSpace(chunkLabel))
+	if !strings.HasPrefix(label, "pdf ") {
+		return
+	}
+	builder.WriteString("This translation will be typeset back into the source PDF text box. Preserve every fact and intended nuance, but avoid explanatory expansion, repetition, or wording that is longer than necessary.\n")
+	switch {
+	case strings.Contains(label, " heading "):
+		builder.WriteString("Keep this heading compact and headline-like; do not turn it into a sentence or add a subtitle that is absent from the source.\n")
+	case strings.Contains(label, " caption "):
+		builder.WriteString("Keep this caption concise and preserve its local register; do not expand it with surrounding article context.\n")
+	default:
+		builder.WriteString("Use concise natural prose suitable for the original column width, without summarizing or omitting source content.\n")
 	}
 }
 
@@ -753,9 +793,13 @@ func (h *translationHarness) runSingleChunk() (string, TranslationStatsPayload, 
 		)
 	}
 
-	text, stats, err := h.runChunk(0, h.plan.chunks[0])
+	chunk := h.plan.chunks[0]
+	text, stats, err := h.runChunk(0, chunk)
 	if err != nil {
 		return "", TranslationStatsPayload{}, err
+	}
+	if chunk.PDFBlockMarker != "" {
+		text = chunk.PDFBlockMarker + "\n" + text
 	}
 
 	h.finalizeLifecycle(text, stats)
@@ -777,13 +821,12 @@ func (h *translationHarness) runChunked() (string, TranslationStatsPayload, erro
 			return "", TranslationStatsPayload{}, err
 		}
 
-		if index > 0 && h.finalText.Len() > 0 && !strings.HasSuffix(h.finalText.String(), "\n") && !strings.HasPrefix(translated, "\n") {
-			h.finalText.WriteString("\n\n")
-			if h.mode.emitLifecycle {
+		startsPDFBlock := appendTranslatedChunkResult(&h.finalText, h.plan.chunks, index, translated)
+		if h.mode.emitLifecycle && index > 0 && !startsPDFBlock {
+			if !strings.HasPrefix(translated, "\n") {
 				h.client.emitToken("\n\n")
 			}
 		}
-		h.finalText.WriteString(translated)
 		h.addStats(stats)
 		h.contextMemory.update(chunk.Text, translated, h.finalText.String())
 	}
@@ -792,6 +835,23 @@ func (h *translationHarness) runChunked() (string, TranslationStatsPayload, erro
 	final := h.finalText.String()
 	h.finalizeLifecycle(final, h.aggregated)
 	return final, h.aggregated, nil
+}
+
+func appendTranslatedChunkResult(builder *strings.Builder, chunks []smartChunk, index int, translated string) bool {
+	if index < 0 || index >= len(chunks) {
+		return false
+	}
+	chunk := chunks[index]
+	startsPDFBlock := chunk.PDFBlockMarker != "" && (index == 0 || chunks[index-1].PDFBlockMarker != chunk.PDFBlockMarker)
+	if builder.Len() > 0 && !strings.HasSuffix(builder.String(), "\n") && !strings.HasPrefix(translated, "\n") {
+		builder.WriteString("\n\n")
+	}
+	if startsPDFBlock {
+		builder.WriteString(chunk.PDFBlockMarker)
+		builder.WriteByte('\n')
+	}
+	builder.WriteString(translated)
+	return startsPDFBlock
 }
 
 func (h *translationHarness) runChunk(index int, chunk smartChunk) (string, TranslationStatsPayload, error) {
@@ -814,7 +874,7 @@ func (h *translationHarness) runChunk(index int, chunk smartChunk) (string, Tran
 	if useInlineProofread(chunkReq.Settings) {
 		result, stats, err := h.inlineProofread.apply(chunkReq, options, index+1, len(h.plan.chunks))
 		if err == nil {
-			return result.Final, stats, nil
+			return cleanupPDFBlockTranslation(result.Final, chunk), stats, nil
 		}
 		return "", TranslationStatsPayload{}, err
 	}
@@ -827,7 +887,18 @@ func (h *translationHarness) runChunk(index int, chunk smartChunk) (string, Tran
 	if err != nil {
 		return "", TranslationStatsPayload{}, err
 	}
-	return cleanupTranslatedText(translated), stats, nil
+	return cleanupPDFBlockTranslation(translated, chunk), stats, nil
+}
+
+func cleanupPDFBlockTranslation(text string, chunk smartChunk) string {
+	cleaned := cleanupTranslatedText(text)
+	if chunk.PDFBlockMarker == "" {
+		return cleaned
+	}
+	cleaned = pdfPageMarkerLinePattern.ReplaceAllString(cleaned, "")
+	cleaned = pdfBlockMarkerLinePattern.ReplaceAllString(cleaned, "")
+	cleaned = pdfBlockRoleLinePattern.ReplaceAllString(cleaned, "")
+	return strings.TrimSpace(cleaned)
 }
 
 func (h *translationHarness) addStats(stats TranslationStatsPayload) {
@@ -1297,7 +1368,11 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 			"OPENING_SOURCE_PARAGRAPH":     strings.TrimSpace(runtimeOptions.OpeningSourceParagraph),
 			"OPENING_TRANSLATED_PARAGRAPH": strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph),
 		})
-		return sanitizeDebugPromptOverride(prompt, settings.EnableEnhancedContextTranslation, false, true)
+		prompt = sanitizeDebugPromptOverride(prompt, settings.EnableEnhancedContextTranslation, false, true)
+		if runtimeOptions.PreservePDFPageMarkers {
+			prompt = pdfPageMarkerInstruction() + "\n\n" + prompt
+		}
+		return prompt
 	}
 	builder.WriteString("[Role And Core Persona]\n")
 	builder.WriteString(fmt.Sprintf(
@@ -1358,6 +1433,7 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	if chunkLabel := strings.TrimSpace(runtimeOptions.ChunkLabel); chunkLabel != "" {
 		builder.WriteString("\n---\n[Current Section]\n")
 		builder.WriteString(fmt.Sprintf("%s.\n", chunkLabel))
+		appendPDFBoxTranslationConstraint(&builder, chunkLabel)
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
@@ -1380,6 +1456,10 @@ func buildPrompt(settings ProviderSettings, sourceLang, targetLang, sourceText, 
 	}
 
 	builder.WriteString("\n---\n[Output Constraints]\n")
+	if runtimeOptions.PreservePDFPageMarkers {
+		builder.WriteString(pdfPageMarkerInstruction())
+		builder.WriteString("\n")
+	}
 	builder.WriteString(fmt.Sprintf(
 		"Produce only the %s translation, without any additional explanations or commentary. Please translate the following %s text into %s:\n\n",
 		targetLabel,
@@ -1436,6 +1516,11 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 	builder.WriteString(fmt.Sprintf("- Make the {final:} more natural in %s while preserving all meaning and paragraph breaks.\n", targetLabel))
 	builder.WriteString(fmt.Sprintf("- The {final:} must also be written entirely in %s unless the source explicitly requires retained original-language text.\n", targetLabel))
 	builder.WriteString("- The user style instruction is mandatory.\n")
+	if runtimeOptions.PreservePDFPageMarkers {
+		builder.WriteString("- ")
+		builder.WriteString(pdfPageMarkerInstruction())
+		builder.WriteString("\n")
+	}
 
 	if trimmedInstruction := strings.TrimSpace(instruction); trimmedInstruction != "" {
 		builder.WriteString("\n[User Style Instruction]\n")
@@ -1469,6 +1554,7 @@ func buildInlineProofreadPrompt(settings ProviderSettings, sourceLang, targetLan
 		builder.WriteString("\n[Current Section]\n")
 		builder.WriteString(chunkLabel)
 		builder.WriteString("\n")
+		appendPDFBoxTranslationConstraint(&builder, chunkLabel)
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
@@ -1526,7 +1612,11 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 			"OPENING_SOURCE_PARAGRAPH":     strings.TrimSpace(runtimeOptions.OpeningSourceParagraph),
 			"OPENING_TRANSLATED_PARAGRAPH": strings.TrimSpace(runtimeOptions.OpeningTranslatedParagraph),
 		})
-		return sanitizeDebugPromptOverride(prompt, settings.EnableEnhancedContextTranslation, settings.EnableTopicAwarePostEdit, false)
+		prompt = sanitizeDebugPromptOverride(prompt, settings.EnableEnhancedContextTranslation, settings.EnableTopicAwarePostEdit, false)
+		if runtimeOptions.PreservePDFPageMarkers {
+			prompt = pdfPageMarkerInstruction() + "\n\n" + prompt
+		}
+		return prompt
 	}
 
 	var builder strings.Builder
@@ -1553,6 +1643,7 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 		builder.WriteString("\n---\n[Current Section]\n")
 		builder.WriteString(chunkLabel)
 		builder.WriteString("\n")
+		appendPDFBoxTranslationConstraint(&builder, chunkLabel)
 	}
 
 	if contextSummary := strings.TrimSpace(runtimeOptions.ContextSummary); contextSummary != "" {
@@ -1595,6 +1686,11 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	))
 	builder.WriteString("- If a sentence is already accurate and natural, keep it close to the draft; otherwise prefer a cleaner final sentence over minimal surface edits.\n")
 	builder.WriteString("- Output only the final corrected translation.\n")
+	if runtimeOptions.PreservePDFPageMarkers {
+		builder.WriteString("- ")
+		builder.WriteString(pdfPageMarkerInstruction())
+		builder.WriteString("\n")
+	}
 
 	if settings.EnableTopicAwarePostEdit {
 		if topicHints := buildTopicAwarePostEditHints(sourceText, draftTranslation, instruction); topicHints != "" {
@@ -1643,6 +1739,10 @@ func buildPostEditPrompt(settings ProviderSettings, sourceLang, targetLang, sour
 	builder.WriteString("\n---\n[Translated Draft Ends]\n")
 
 	return builder.String()
+}
+
+func pdfPageMarkerInstruction() string {
+	return "PDF structural markers matching [[DKST_PDF_PAGE:NNNN]] or [[DKST_PDF_BLOCK:NNNN:NNNN]] are layout control tokens: copy every marker exactly once, unchanged and untranslated, in the original order, on its own line; never merge text across block markers, omit, duplicate, move, or place translated text before its marker. Translate each block according to its own subject and register while using neighboring blocks only for terminology and document-level continuity."
 }
 
 func parseInlineProofreadResponse(raw string) (inlineProofreadResult, error) {
@@ -2338,6 +2438,8 @@ func (c *Client) postEditTranslation(reqCtx context.Context, reqData Translation
 type smartChunk struct {
 	Text           string
 	OverlapContext string
+	PDFBlockMarker string
+	PDFBlockRole   string
 }
 
 const draftStageProgressWeight = 0.75
@@ -2490,6 +2592,41 @@ func buildSmartChunks(text string, maxChars int) []smartChunk {
 			continue
 		}
 		chunks[i].OverlapContext = overlap
+	}
+	return chunks
+}
+
+func buildPDFBlockChunks(text string, maxChars int, enableSmartChunking bool) []smartChunk {
+	matches := pdfBlockMarkerLinePattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	chunks := make([]smartChunk, 0, len(matches))
+	for index, match := range matches {
+		marker := text[match[2]:match[3]]
+		start := match[1]
+		end := len(text)
+		if index+1 < len(matches) {
+			end = matches[index+1][0]
+		}
+		blockText := strings.TrimSpace(pdfPageMarkerLinePattern.ReplaceAllString(text[start:end], ""))
+		role := ""
+		if roleMatch := pdfBlockRoleLinePattern.FindStringSubmatch(blockText); len(roleMatch) == 2 {
+			role = roleMatch[1]
+		}
+		blockText = strings.TrimSpace(pdfBlockRoleLinePattern.ReplaceAllString(blockText, ""))
+		if blockText == "" {
+			continue
+		}
+		blockChunks := []smartChunk{{Text: blockText}}
+		if enableSmartChunking && maxChars > 0 && len([]rune(blockText)) > maxChars {
+			blockChunks = buildSmartChunks(blockText, maxChars)
+		}
+		for blockChunkIndex := range blockChunks {
+			blockChunks[blockChunkIndex].PDFBlockMarker = marker
+			blockChunks[blockChunkIndex].PDFBlockRole = role
+			chunks = append(chunks, blockChunks[blockChunkIndex])
+		}
 	}
 	return chunks
 }

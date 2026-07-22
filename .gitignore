@@ -1,5 +1,52 @@
-build/bin
-node_modules
-frontend/dist
-.DS_Store
+# Go Test Files & Test Artifacts
+*_test.go
+test.go
+test_*.go
+*.test
+*.out
+coverage.out
+coverage.txt
+*.prof
+
+# Build Output & Executables
+build/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.app
+
+# Node / Frontend Build & Caches
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+frontend/.vite/
+.cache/
+.npm/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary Directories & Files
+tmp/
+temp/
 note/
+
+# System & IDE Caches
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
