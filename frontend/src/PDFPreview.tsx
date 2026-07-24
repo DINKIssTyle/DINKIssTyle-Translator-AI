@@ -20,6 +20,8 @@ type PDFPreviewProps = {
     documentName: string;
     busy?: boolean;
     busyLabel?: string;
+    activePage?: number;
+    totalPageCount?: number;
 };
 
 type PDFDocumentProxy = any;
@@ -76,19 +78,31 @@ function PDFPageCanvas({
                 const cssScale = Math.max(0.15, (availableWidth / naturalViewport.width) * zoom);
                 const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
                 const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                canvas.width = Math.floor(renderViewport.width);
-                canvas.height = Math.floor(renderViewport.height);
-                canvas.style.width = `${Math.floor(naturalViewport.width * cssScale)}px`;
-                canvas.style.height = `${Math.floor(naturalViewport.height * cssScale)}px`;
-                const context = canvas.getContext("2d", { alpha: false });
+                // Render into a per-task offscreen canvas. Resize/scroll events can
+                // cancel one PDF.js task and start the next before cancellation has
+                // fully settled; sharing the visible canvas between those tasks
+                // causes PDF.js to reject the newer render.
+                const renderCanvas = window.document.createElement("canvas");
+                renderCanvas.width = Math.floor(renderViewport.width);
+                renderCanvas.height = Math.floor(renderViewport.height);
+                const context = renderCanvas.getContext("2d", { alpha: false });
                 if (!context) throw new Error("Canvas is unavailable.");
                 renderTask = page.render({ canvasContext: context, viewport: renderViewport });
                 await renderTask.promise;
-                if (!cancelled) setRenderError("");
+                if (cancelled) return;
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                canvas.width = renderCanvas.width;
+                canvas.height = renderCanvas.height;
+                canvas.style.width = `${Math.floor(naturalViewport.width * cssScale)}px`;
+                canvas.style.height = `${Math.floor(naturalViewport.height * cssScale)}px`;
+                const visibleContext = canvas.getContext("2d", { alpha: false });
+                if (!visibleContext) throw new Error("Canvas is unavailable.");
+                visibleContext.drawImage(renderCanvas, 0, 0);
+                setRenderError("");
             } catch (error: any) {
                 if (!cancelled && error?.name !== "RenderingCancelledException") {
+                    console.error(`Could not render PDF page ${pageNumber}:`, error);
                     setRenderError(String(error));
                 }
             }
@@ -105,6 +119,7 @@ function PDFPageCanvas({
         <div
             className="pdf-page-shell"
             ref={wrapperRef}
+            data-page-number={pageNumber}
             style={{ minHeight: `${Math.min(1200, placeholderWidth * aspectRatio)}px` }}
         >
             <div className="pdf-page-number">{pageNumber}</div>
@@ -117,8 +132,16 @@ function PDFPageCanvas({
     );
 }
 
-export default function PDFPreview({ dataBase64, documentName, busy = false, busyLabel = "Building PDF preview..." }: PDFPreviewProps) {
+export default function PDFPreview({
+    dataBase64,
+    documentName,
+    busy = false,
+    busyLabel = "Building PDF preview...",
+    activePage = 0,
+    totalPageCount = 0,
+}: PDFPreviewProps) {
     const viewportRef = useRef<HTMLDivElement>(null);
+    const pagesRef = useRef<HTMLDivElement>(null);
     const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
     const [pageCount, setPageCount] = useState(0);
     const [availableWidth, setAvailableWidth] = useState(0);
@@ -173,12 +196,23 @@ export default function PDFPreview({ dataBase64, documentName, busy = false, bus
 
     const pageNumbers = useMemo(() => Array.from({ length: pageCount }, (_, index) => index + 1), [pageCount]);
 
+    useEffect(() => {
+        if (!document || activePage <= 0 || pageCount < activePage) return;
+        const frame = window.requestAnimationFrame(() => {
+            const page = pagesRef.current?.querySelector<HTMLElement>(`[data-page-number="${activePage}"]`);
+            page?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [activePage, document, pageCount]);
+
     return (
         <div className="pdf-preview" ref={viewportRef}>
             <div className="pdf-preview-toolbar">
                 <span className="material-symbols-outlined pdf-preview-icon">picture_as_pdf</span>
                 <span className="pdf-preview-name" title={documentName}>{documentName}</span>
-                <span className="pdf-preview-count">{pageCount ? `${pageCount} pages` : "Loading..."}</span>
+                <span className="pdf-preview-count">
+                    {pageCount ? `${pageCount}${totalPageCount > pageCount ? ` / ${totalPageCount}` : ""} pages` : "Loading..."}
+                </span>
                 <button type="button" onClick={() => setZoom(value => Math.max(0.55, value - 0.1))} title="Zoom out" disabled={zoom <= 0.55}>
                     <span className="material-symbols-outlined">zoom_out</span>
                 </button>
@@ -187,7 +221,7 @@ export default function PDFPreview({ dataBase64, documentName, busy = false, bus
                     <span className="material-symbols-outlined">zoom_in</span>
                 </button>
             </div>
-            <div className="pdf-pages">
+            <div className="pdf-pages" ref={pagesRef}>
                 {error && <div className="pdf-preview-error">Could not open this PDF preview.<br />{error}</div>}
                 {!error && document && pageNumbers.map(pageNumber => (
                     <PDFPageCanvas

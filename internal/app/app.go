@@ -32,6 +32,10 @@ type App struct {
 	webServerTLS      bool
 	webServerSettings persistedWebServerSettings
 	webSessions       map[string]time.Time
+	pdfMu             sync.Mutex
+	activePDF         file.PDFDocument
+	pdfRunMu          sync.Mutex
+	pdfCheckpointMu   sync.Mutex
 }
 
 // NewApp creates a new App application struct
@@ -60,6 +64,11 @@ func (a *App) Startup(ctx context.Context) {
 }
 
 func (a *App) Shutdown(context.Context) {
+	a.llm.CancelTranslation()
+	a.pdfRunMu.Lock()
+	a.pdfRunMu.Unlock()
+	a.markPDFCheckpointCleanShutdown()
+
 	a.webServerMu.Lock()
 	defer a.webServerMu.Unlock()
 	_ = a.stopWebServerLocked()
@@ -81,6 +90,9 @@ func (a *App) SaveHostProviderSettings(settings llm.ProviderSettings) error {
 
 // Translate performs the translation via the configured provider.
 func (a *App) Translate(req llm.TranslationRequest) error {
+	if req.DocumentType == "pdf" {
+		return a.translatePDF(req)
+	}
 	return a.llm.Translate(req)
 }
 
@@ -95,7 +107,14 @@ func (a *App) OpenFile() (string, error) {
 }
 
 func (a *App) OpenPDF() (file.PDFDocument, error) {
-	return a.file.OpenPDF()
+	document, err := a.file.OpenPDF()
+	if err != nil || document.PageCount == 0 {
+		return document, err
+	}
+	a.pdfMu.Lock()
+	a.activePDF = document
+	a.pdfMu.Unlock()
+	return document, nil
 }
 
 func (a *App) CreateTranslatedPDF(req file.PDFCreateRequest) (file.PDFResult, error) {

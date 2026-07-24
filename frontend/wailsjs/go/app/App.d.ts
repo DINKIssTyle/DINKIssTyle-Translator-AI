@@ -28,6 +28,8 @@ export function OpenPDF():Promise<pdfengine.Document>;
 
 export function ReadDebugStudioState():Promise<string>;
 
+export function RecoverPDFCheckpoint():Promise<app.PDFCheckpointRecovery>;
+
 export function SaveFile(arg1:string):Promise<string>;
 
 export function SaveHostProviderSettings(arg1:llm.ProviderSettings):Promise<void>;

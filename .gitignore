@@ -1,5 +1,7 @@
 # Go Test Files & Test Artifacts
 *_test.go
+!internal/app/pdfcheckpoint_test.go
+!internal/llm/pdf_page_progress_test.go
 test.go
 test_*.go
 *.test

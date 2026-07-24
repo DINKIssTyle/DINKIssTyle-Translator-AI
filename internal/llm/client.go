@@ -42,6 +42,7 @@ type Client struct {
 type eventSink interface {
 	Token(string)
 	Chunk(TranslationChunkPayload)
+	Page(TranslationPagePayload)
 	Clear()
 	Complete(TranslationCompletePayload)
 	Progress(TranslationProgressPayload)
@@ -185,6 +186,13 @@ type TranslationChunkPayload struct {
 	Phase       string `json:"phase"`
 	Text        string `json:"text"`
 	FinalClosed bool   `json:"final_closed,omitempty"`
+}
+
+// TranslationPagePayload is emitted only after every translated chunk that
+// belongs to a source PDF page has completed (including post-editing).
+type TranslationPagePayload struct {
+	PageNumber     int    `json:"page_number"`
+	TranslatedText string `json:"translated_text"`
 }
 
 type TranslationProgressPayload struct {
@@ -801,6 +809,8 @@ func (h *translationHarness) runSingleChunk() (string, TranslationStatsPayload, 
 	if chunk.PDFBlockMarker != "" {
 		text = chunk.PDFBlockMarker + "\n" + text
 	}
+	h.finalText.WriteString(text)
+	h.emitCompletedPDFPage(0)
 
 	h.finalizeLifecycle(text, stats)
 	return text, stats, nil
@@ -829,12 +839,30 @@ func (h *translationHarness) runChunked() (string, TranslationStatsPayload, erro
 		}
 		h.addStats(stats)
 		h.contextMemory.update(chunk.Text, translated, h.finalText.String())
+		h.emitCompletedPDFPage(index)
 	}
 
 	h.averageAggregatedStats()
 	final := h.finalText.String()
 	h.finalizeLifecycle(final, h.aggregated)
 	return final, h.aggregated, nil
+}
+
+func (h *translationHarness) emitCompletedPDFPage(index int) {
+	if index < 0 || index >= len(h.plan.chunks) {
+		return
+	}
+	pageNumber := h.plan.chunks[index].PDFPageNumber
+	if pageNumber <= 0 {
+		return
+	}
+	if index+1 < len(h.plan.chunks) && h.plan.chunks[index+1].PDFPageNumber == pageNumber {
+		return
+	}
+	h.client.emitPage(TranslationPagePayload{
+		PageNumber:     pageNumber,
+		TranslatedText: h.finalText.String(),
+	})
 }
 
 func appendTranslatedChunkResult(builder *strings.Builder, chunks []smartChunk, index int, translated string) bool {
@@ -2440,6 +2468,7 @@ type smartChunk struct {
 	OverlapContext string
 	PDFBlockMarker string
 	PDFBlockRole   string
+	PDFPageNumber  int
 }
 
 const draftStageProgressWeight = 0.75
@@ -2604,6 +2633,8 @@ func buildPDFBlockChunks(text string, maxChars int, enableSmartChunking bool) []
 	chunks := make([]smartChunk, 0, len(matches))
 	for index, match := range matches {
 		marker := text[match[2]:match[3]]
+		pageNumber := 0
+		_, _ = fmt.Sscanf(marker, "[[DKST_PDF_BLOCK:%d:", &pageNumber)
 		start := match[1]
 		end := len(text)
 		if index+1 < len(matches) {
@@ -2625,6 +2656,7 @@ func buildPDFBlockChunks(text string, maxChars int, enableSmartChunking bool) []
 		for blockChunkIndex := range blockChunks {
 			blockChunks[blockChunkIndex].PDFBlockMarker = marker
 			blockChunks[blockChunkIndex].PDFBlockRole = role
+			blockChunks[blockChunkIndex].PDFPageNumber = pageNumber
 			chunks = append(chunks, blockChunks[blockChunkIndex])
 		}
 	}
@@ -3175,6 +3207,12 @@ func (c *Client) emitChunk(payload TranslationChunkPayload) {
 	}
 }
 
+func (c *Client) emitPage(payload TranslationPagePayload) {
+	if sink := c.currentSink(); sink != nil {
+		sink.Page(payload)
+	}
+}
+
 func (c *Client) emitClear() {
 	if sink := c.currentSink(); sink != nil {
 		sink.Clear()
@@ -3273,6 +3311,10 @@ func (s runtimeEventSink) Token(token string) {
 
 func (s runtimeEventSink) Chunk(payload TranslationChunkPayload) {
 	runtime.EventsEmit(s.ctx, "translation:chunk", payload)
+}
+
+func (s runtimeEventSink) Page(payload TranslationPagePayload) {
+	runtime.EventsEmit(s.ctx, "translation:page", payload)
 }
 
 func (s runtimeEventSink) Clear() {

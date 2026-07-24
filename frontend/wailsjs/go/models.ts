@@ -1,5 +1,47 @@
 export namespace app {
-
+	
+	export class PDFCheckpointRecovery {
+	    found: boolean;
+	    document: pdfengine.Document;
+	    result: pdfengine.Result;
+	    completedPages: number;
+	    totalPages: number;
+	    status: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PDFCheckpointRecovery(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.document = this.convertValues(source["document"], pdfengine.Document);
+	        this.result = this.convertValues(source["result"], pdfengine.Result);
+	        this.completedPages = source["completedPages"];
+	        this.totalPages = source["totalPages"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class WebServerSettings {
 	    enabled: boolean;
 	    port: string;
@@ -11,11 +53,11 @@ export namespace app {
 	    configDirectory: string;
 	    hasPassword: boolean;
 	    url?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WebServerSettings(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -38,11 +80,11 @@ export namespace app {
 	    certDomain?: string;
 	    certPath?: string;
 	    keyPath?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WebServerSettingsInput(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -58,17 +100,17 @@ export namespace app {
 }
 
 export namespace llm {
-
+	
 	export class ModelInfo {
 	    id: string;
 	    displayName?: string;
 	    supportsReasoning: boolean;
 	    reasoningOptions?: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ModelInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -94,11 +136,11 @@ export namespace llm {
 	    smartChunkSize?: number;
 	    debugTranslationPromptTemplate?: string;
 	    debugPostEditPromptTemplate?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProviderSettings(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mode = source["mode"];
@@ -126,11 +168,11 @@ export namespace llm {
 	    targetLang: string;
 	    instruction: string;
 	    documentType?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TranslationRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.settings = this.convertValues(source["settings"], ProviderSettings);
@@ -140,7 +182,7 @@ export namespace llm {
 	        this.instruction = source["instruction"];
 	        this.documentType = source["documentType"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -163,17 +205,17 @@ export namespace llm {
 }
 
 export namespace pdfengine {
-
+	
 	export class TextRegion {
 	    x: number;
 	    y: number;
 	    width: number;
 	    height: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextRegion(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.x = source["x"];
@@ -194,11 +236,11 @@ export namespace pdfengine {
 	    role: string;
 	    text: string;
 	    regions?: TextRegion[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TextBlock(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -213,7 +255,7 @@ export namespace pdfengine {
 	        this.text = source["text"];
 	        this.regions = this.convertValues(source["regions"], TextRegion);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -238,11 +280,11 @@ export namespace pdfengine {
 	    height: number;
 	    text: string;
 	    blocks: TextBlock[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Page(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pageNumber = source["pageNumber"];
@@ -251,7 +293,7 @@ export namespace pdfengine {
 	        this.text = source["text"];
 	        this.blocks = this.convertValues(source["blocks"], TextBlock);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -275,11 +317,11 @@ export namespace pdfengine {
 	    sourceDataBase64: string;
 	    pages: Page[];
 	    translatedText: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ComposeRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sourceName = source["sourceName"];
@@ -287,7 +329,7 @@ export namespace pdfengine {
 	        this.pages = this.convertValues(source["pages"], Page);
 	        this.translatedText = source["translatedText"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -313,11 +355,11 @@ export namespace pdfengine {
 	    pages: Page[];
 	    sourceText: string;
 	    extractedLength: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Document(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -327,7 +369,7 @@ export namespace pdfengine {
 	        this.sourceText = source["sourceText"];
 	        this.extractedLength = source["extractedLength"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -346,17 +388,17 @@ export namespace pdfengine {
 		    return a;
 		}
 	}
-
+	
 	export class Result {
 	    name: string;
 	    dataBase64: string;
 	    pageCount: number;
 	    warning?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -365,7 +407,7 @@ export namespace pdfengine {
 	        this.warning = source["warning"];
 	    }
 	}
-
+	
 
 }
 

@@ -19,6 +19,7 @@ import {
     OpenFile,
     OpenPDF,
     ReadDebugStudioState,
+    RecoverPDFCheckpoint,
     SaveFile,
     SavePDF,
     SaveHostProviderSettings,
@@ -205,6 +206,23 @@ type PDFResultData = {
     dataBase64: string;
     pageCount: number;
     warning?: string;
+};
+
+type PDFPageReadyPayload = {
+    pageNumber: number;
+    completedPages: number;
+    totalPages: number;
+    result: PDFResultData;
+};
+
+type PDFCheckpointRecoveryData = {
+    found: boolean;
+    document: PDFDocumentData;
+    result: PDFResultData;
+    completedPages: number;
+    totalPages: number;
+    status: string;
+    error?: string;
 };
 
 const STORAGE_KEY = "dkst-translator-ai-settings";
@@ -978,6 +996,7 @@ function renderMarkdown(text: string): React.ReactNode {
 function persistSettings(
     selectedModel: string,
     providerSettings: ProviderSettings,
+    fastTranslationEnabled: boolean,
     editorFontSize: number,
     sourceLang: string,
     targetLang: string,
@@ -996,6 +1015,7 @@ function persistSettings(
         enablePostEdit: providerSettings.enablePostEdit,
         enableTopicAwarePostEdit: providerSettings.enableTopicAwarePostEdit,
         enableEnhancedContextTranslation: providerSettings.enableEnhancedContextTranslation,
+        fastTranslationEnabled,
         enhancedContextGlossary: providerSettings.enhancedContextGlossary,
         enableSmartChunking: providerSettings.enableSmartChunking,
         smartChunkSize: providerSettings.smartChunkSize,
@@ -1137,6 +1157,7 @@ function App() {
     const [translation, setTranslation] = useState("");
     const [pdfDocument, setPDFDocument] = useState<PDFDocumentData | null>(null);
     const [translatedPDF, setTranslatedPDF] = useState<PDFResultData | null>(null);
+    const [completedPDFPages, setCompletedPDFPages] = useState(0);
     const [isBuildingTranslatedPDF, setIsBuildingTranslatedPDF] = useState(false);
     const [translationCompletionID, setTranslationCompletionID] = useState(0);
     const [isTranslating, setIsTranslating] = useState(false);
@@ -1158,6 +1179,7 @@ function App() {
         enableSmartChunking: storedSettings?.enableSmartChunking ?? true,
         smartChunkSize: storedSettings?.smartChunkSize || 1000,
     });
+    const [fastTranslationEnabled, setFastTranslationEnabled] = useState<boolean>(Boolean(storedSettings?.fastTranslationEnabled));
     const [sourceLang, setSourceLang] = useState(storedSettings?.sourceLang || "auto");
     const [targetLang, setTargetLang] = useState(storedSettings?.targetLang || "Korean");
     const [instruction, setInstruction] = useState(storedSettings?.instruction ?? "");
@@ -1251,6 +1273,7 @@ function App() {
     const browserTranslateAbortRef = useRef<AbortController | null>(null);
     const translationRunIdRef = useRef(0);
     const translatedPDFBuildIDRef = useRef(0);
+    const didRecoverPDFCheckpointRef = useRef(false);
     const reviewOverlayTimerRef = useRef<number | null>(null);
     const reviewOverlayBodyRef = useRef<HTMLDivElement>(null);
     const reviewOverlayScrollFrameRef = useRef<number | null>(null);
@@ -1261,6 +1284,9 @@ function App() {
     const modelPopoverRef = useRef<HTMLDivElement>(null);
     const debugSnapshotRef = useRef("");
     const selectedModel = providerSettings.model;
+    const effectivePostEditEnabled = !fastTranslationEnabled && providerSettings.enablePostEdit;
+    const effectiveEnhancedContextEnabled = !fastTranslationEnabled && providerSettings.enableEnhancedContextTranslation;
+    const effectiveTopicAwarePostEditEnabled = !fastTranslationEnabled && providerSettings.enableTopicAwarePostEdit;
     const selectedModelInfo = models.find(model => model.id === selectedModel) || null;
     const reasoningOptions = selectedModelInfo?.reasoningOptions?.length ? selectedModelInfo.reasoningOptions : DEFAULT_REASONING_OPTIONS;
     const supportsReasoning = Boolean(selectedModelInfo?.supportsReasoning);
@@ -1955,6 +1981,36 @@ function App() {
     }, []);
 
     useEffect(() => {
+        if (isBrowserMode || windowMode !== "main" || didRecoverPDFCheckpointRef.current) {
+            return;
+        }
+        didRecoverPDFCheckpointRef.current = true;
+        let active = true;
+        void RecoverPDFCheckpoint()
+            .then((recovery: PDFCheckpointRecoveryData) => {
+                if (!active || !recovery?.found) {
+                    return;
+                }
+                setPDFDocument(recovery.document);
+                setSourceText(recovery.document.sourceText);
+                setCompletedPDFPages(recovery.completedPages);
+                if (recovery.result?.dataBase64) {
+                    setTranslatedPDF(recovery.result);
+                }
+                const recoveredLabel = `${recovery.completedPages} / ${recovery.totalPages} translated pages recovered`;
+                setStatusMessage(recovery.error ? `${recoveredLabel}. Preview rebuild failed: ${recovery.error}` : `${recoveredLabel}.`);
+            })
+            .catch((err: any) => {
+                if (active) {
+                    console.error("Could not recover PDF translation checkpoint:", err);
+                }
+            });
+        return () => {
+            active = false;
+        };
+    }, [windowMode]);
+
+    useEffect(() => {
         if (isBrowserMode) {
             return;
         }
@@ -2155,6 +2211,26 @@ function App() {
             smoothScrollTranslationToBottom();
         });
 
+        EventsOn("translation:pdf-page", (payload: PDFPageReadyPayload) => {
+            if (!payload?.result?.dataBase64) {
+                return;
+            }
+            translatedPDFBuildIDRef.current += 1;
+            setTranslatedPDF(payload.result);
+            setCompletedPDFPages(payload.completedPages || payload.result.pageCount || 0);
+            setIsBuildingTranslatedPDF(false);
+            setStatusMessage(
+                payload.result.warning
+                    ? `${payload.completedPages} / ${payload.totalPages} pages translated and auto-saved. ${payload.result.warning}`
+                    : `${payload.completedPages} / ${payload.totalPages} pages translated and auto-saved.`
+            );
+        });
+
+        EventsOn("translation:pdf-page-error", (payload: { pageNumber?: number; message?: string }) => {
+            setIsBuildingTranslatedPDF(false);
+            setStatusMessage(`Could not save translated page ${payload?.pageNumber || ""}: ${payload?.message || "Unknown error"}`);
+        });
+
         EventsOn("translation:clear", () => {
             resetTranslationPresentation();
         });
@@ -2316,6 +2392,8 @@ function App() {
             window.removeEventListener("keydown", handleKeyDown);
             EventsOff("translation:token");
             EventsOff("translation:chunk");
+            EventsOff("translation:pdf-page");
+            EventsOff("translation:pdf-page-error");
             EventsOff("translation:clear");
             EventsOff("translation:complete");
             EventsOff("translation:debug");
@@ -2334,10 +2412,12 @@ function App() {
         if (isBrowserMode || !pdfDocument || !translationCompletionID || !cleanedTranslation.trim()) {
             return;
         }
+        if (translatedPDF?.dataBase64 && completedPDFPages >= pdfDocument.pageCount) {
+            return;
+        }
         const buildID = translatedPDFBuildIDRef.current + 1;
         translatedPDFBuildIDRef.current = buildID;
         setIsBuildingTranslatedPDF(true);
-        setTranslatedPDF(null);
         setStatusMessage("Building translated PDF preview...");
         void CreateTranslatedPDF({
             sourceName: pdfDocument.name,
@@ -2347,6 +2427,7 @@ function App() {
         } as any).then((result: PDFResultData) => {
             if (translatedPDFBuildIDRef.current !== buildID) return;
             setTranslatedPDF(result);
+            setCompletedPDFPages(result.pageCount || pdfDocument.pageCount);
             setStatusMessage(result.warning || `Translated PDF ready (${result.pageCount} pages).`);
         }).catch((error: any) => {
             if (translatedPDFBuildIDRef.current !== buildID) return;
@@ -2357,7 +2438,7 @@ function App() {
                 setIsBuildingTranslatedPDF(false);
             }
         });
-    }, [translationCompletionID]);
+    }, [translationCompletionID, completedPDFPages, translatedPDF]);
 
     useEffect(() => {
         if (isBrowserMode) {
@@ -2478,6 +2559,7 @@ function App() {
         persistSettings(
             selectedModel,
             providerSettings,
+            fastTranslationEnabled,
             editorFontSize,
             sourceLang,
             targetLang,
@@ -2490,7 +2572,7 @@ function App() {
         }
 
         showSavedToastMessage("Settings saved");
-    }, [providerSettings, editorFontSize, sourceLang, targetLang, showDebugPanel, selectedModel, isDebugStudioWindow]);
+    }, [providerSettings, fastTranslationEnabled, editorFontSize, sourceLang, targetLang, showDebugPanel, selectedModel, isDebugStudioWindow]);
 
     useEffect(() => {
         if (!translationSearchQuery.trim()) {
@@ -2593,14 +2675,23 @@ function App() {
         if (pdfDocument) {
             translatedPDFBuildIDRef.current += 1;
             setTranslatedPDF(null);
+            setCompletedPDFPages(0);
             setIsBuildingTranslatedPDF(false);
         }
         setLastTopicAwareHintsPreview("");
 
         const runTranslation = async (settings: ProviderSettings) => {
+            const effectiveSettings = fastTranslationEnabled
+                ? {
+                    ...settings,
+                    enablePostEdit: false,
+                    enableTopicAwarePostEdit: false,
+                    enableEnhancedContextTranslation: false,
+                }
+                : settings;
             const payload = llm.TranslationRequest.createFrom({
                 settings: llm.ProviderSettings.createFrom({
-                    ...settings,
+                    ...effectiveSettings,
                     debugTranslationPromptTemplate: debugTranslationPromptTemplate.trim(),
                 }),
                 sourceText,
@@ -2763,6 +2854,7 @@ function App() {
             persistSettings(
                 selectedModel,
                 fallbackSettings,
+                fastTranslationEnabled,
                 editorFontSize,
                 sourceLang,
                 targetLang,
@@ -2799,6 +2891,7 @@ function App() {
         persistSettings(
             selectedModel,
             providerSettings,
+            fastTranslationEnabled,
             editorFontSize,
             sourceLang,
             targetLang,
@@ -2899,9 +2992,9 @@ function App() {
     };
 
     const handleCancel = async () => {
-        translationRunIdRef.current += 1;
         browserTranslateAbortRef.current?.abort();
         browserTranslateAbortRef.current = null;
+        setStatusMessage("Cancelling translation...");
         try {
             if (isBrowserMode) {
                 await callBrowserJSON<void>("/api/cancel", {
@@ -2911,12 +3004,11 @@ function App() {
             } else {
                 await CancelTranslation();
             }
-            setStatusMessage("Sent translation cancel request.");
+            setStatusMessage("Waiting for the current page checkpoint to finish...");
         } catch (err: any) {
             console.error("Cancel failed:", err);
             setStatusMessage(`Cancel failed: ${String(err)}`);
         }
-        setIsTranslating(false);
         setProgressState(prev => {
             const next = { ...prev, visible: false };
             progressStateRef.current = next;
@@ -2935,6 +3027,7 @@ function App() {
                 if (pdfDocument) resetTranslationPresentation();
                 setPDFDocument(null);
                 setTranslatedPDF(null);
+                setCompletedPDFPages(0);
                 setSourceText(content);
                 announceAction("Loaded file content into the source editor.");
             }
@@ -2958,6 +3051,7 @@ function App() {
             resetTranslationPresentation();
             translatedPDFBuildIDRef.current += 1;
             setTranslatedPDF(null);
+            setCompletedPDFPages(0);
             setPDFDocument(document);
             setSourceText(document.sourceText || "");
             setStatusMessage(`Loaded ${document.name} (${document.pageCount} pages).`);
@@ -2981,6 +3075,7 @@ function App() {
                 setSourceText(content);
                 setPDFDocument(null);
                 setTranslatedPDF(null);
+                setCompletedPDFPages(0);
                 announceAction("Pasted clipboard text into the source editor.");
                 return;
             }
@@ -2993,6 +3088,7 @@ function App() {
             setSourceText(content);
             setPDFDocument(null);
             setTranslatedPDF(null);
+            setCompletedPDFPages(0);
             announceAction("Pasted clipboard text into the source editor.");
         } catch (err: any) {
             console.error(err);
@@ -3018,6 +3114,7 @@ function App() {
             setSourceText("");
             setPDFDocument(null);
             setTranslatedPDF(null);
+            setCompletedPDFPages(0);
             translatedPDFBuildIDRef.current += 1;
             announceAction("Cleared the source editor.");
         } catch (err: any) {
@@ -3456,7 +3553,7 @@ function App() {
                         </button>
                         <div className={`status-summary ${showStatusSummary ? "is-open" : ""}`}>
                             <span className="status-summary-text">
-                                Source: {sourceLang} | Target: {targetLang} | Reasoning: {providerSettings.reasoning || "auto"} | Temperature: {temperatureLabel} | Proofread: {providerSettings.enablePostEdit ? "on" : "off"} | Smart Chunking: {providerSettings.enableSmartChunking ? `on ${providerSettings.smartChunkSize}` : "off"} | Prompt: {instruction ? "set" : "empty"} |
+                                Source: {sourceLang} | Target: {targetLang} | Reasoning: {providerSettings.reasoning || "auto"} | Temperature: {temperatureLabel} | Fast: {fastTranslationEnabled ? "on" : "off"} | Proofread: {effectivePostEditEnabled ? "on" : "off"} | Smart Chunking: {providerSettings.enableSmartChunking ? `on ${providerSettings.smartChunkSize}` : "off"} | Prompt: {instruction ? "set" : "empty"} |
                             </span>
                             {!isBrowserMode && <div className="status-summary-actions">
                                 <button className={`debug-toggle ${showDebugPanel ? "is-on" : "is-off"}`} onClick={() => setShowDebugPanel((prev: boolean) => !prev)}>
@@ -3653,24 +3750,44 @@ function App() {
                                 <div className="prompt-secondary-group prompt-secondary-group-toggles">
                                     <button
                                         type="button"
-                                        className={`prompt-inline-action prompt-inline-action-proofread prompt-tooltip ${providerSettings.enablePostEdit ? "is-on" : ""}`}
-                                        onClick={() => setProviderSettings(prev => ({ ...prev, enablePostEdit: !prev.enablePostEdit }))}
-                                        data-tooltip="Proofread After Translation"
+                                        className={`prompt-inline-action prompt-inline-action-fast prompt-tooltip ${fastTranslationEnabled ? "is-on" : ""}`}
+                                        onClick={() => setFastTranslationEnabled(previous => {
+                                            const next = !previous;
+                                            setStatusMessage(next
+                                                ? "Fast translation enabled. Quality-focused post-processing is temporarily disabled."
+                                                : "Fast translation disabled. Previous quality settings were restored.");
+                                            return next;
+                                        })}
+                                        data-tooltip="Translate faster by prioritizing speed over quality."
+                                        aria-pressed={fastTranslationEnabled}
                                     >
-                                        <span className="material-symbols-outlined prompt-inline-feature-icon">grading</span>
+                                        <span className="material-symbols-outlined prompt-inline-feature-icon">bolt</span>
                                         <span className="material-symbols-outlined prompt-inline-toggle-icon">
-                                            {providerSettings.enablePostEdit ? "toggle_on" : "toggle_off"}
+                                            {fastTranslationEnabled ? "toggle_on" : "toggle_off"}
                                         </span>
                                     </button>
                                     <button
                                         type="button"
-                                        className={`prompt-inline-action prompt-inline-action-enhanced prompt-tooltip ${providerSettings.enableEnhancedContextTranslation ? "is-on" : ""}`}
+                                        className={`prompt-inline-action prompt-inline-action-proofread prompt-tooltip ${effectivePostEditEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
+                                        onClick={() => setProviderSettings(prev => ({ ...prev, enablePostEdit: !prev.enablePostEdit }))}
+                                        data-tooltip="Proofread After Translation"
+                                        disabled={fastTranslationEnabled}
+                                    >
+                                        <span className="material-symbols-outlined prompt-inline-feature-icon">grading</span>
+                                        <span className="material-symbols-outlined prompt-inline-toggle-icon">
+                                            {effectivePostEditEnabled ? "toggle_on" : "toggle_off"}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`prompt-inline-action prompt-inline-action-enhanced prompt-tooltip ${effectiveEnhancedContextEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
                                         onClick={() => setShowEnhancedContextModal(true)}
                                         data-tooltip="Enhanced Context Translation"
+                                        disabled={fastTranslationEnabled}
                                     >
                                         <span className="material-symbols-outlined prompt-inline-feature-icon">contextual_token_add</span>
                                         <span className="material-symbols-outlined prompt-inline-toggle-icon">
-                                            {providerSettings.enableEnhancedContextTranslation ? "toggle_on" : "toggle_off"}
+                                            {effectiveEnhancedContextEnabled ? "toggle_on" : "toggle_off"}
                                         </span>
                                     </button>
                                 </div>
@@ -3706,6 +3823,7 @@ function App() {
                                 <PDFPreview
                                     dataBase64={pdfDocument.dataBase64}
                                     documentName={pdfDocument.name}
+                                    activePage={completedPDFPages}
                                 />
                             ) : (
                                 <textarea
@@ -3747,6 +3865,8 @@ function App() {
                                     <PDFPreview
                                         dataBase64={translatedPDF.dataBase64}
                                         documentName={translatedPDF.name}
+                                        activePage={completedPDFPages}
+                                        totalPageCount={pdfDocument.pageCount}
                                     />
                                 ) : (
                                     <div className="pdf-translation-placeholder">
@@ -3813,7 +3933,11 @@ function App() {
                                     </button>
                                 </div>
                             )}
-                            <div className="pane-stats">{translationStats}</div>
+                            <div className="pane-stats">
+                                {pdfDocument && completedPDFPages > 0
+                                    ? `${completedPDFPages} / ${pdfDocument.pageCount} pages translated`
+                                    : translationStats}
+                            </div>
                         </div>
                     </div>
                 </main>
@@ -4170,7 +4294,8 @@ function App() {
                                         <label className="settings-checkbox">
                                             <input
                                                 type="checkbox"
-                                                checked={providerSettings.enableTopicAwarePostEdit}
+                                                checked={effectiveTopicAwarePostEditEnabled}
+                                                disabled={fastTranslationEnabled}
                                                 onChange={e => setProviderSettings(prev => ({
                                                     ...prev,
                                                     enableTopicAwarePostEdit: e.target.checked,
@@ -4299,7 +4424,8 @@ function App() {
                                                 <label className="settings-checkbox">
                                                     <input
                                                         type="checkbox"
-                                                        checked={providerSettings.enableTopicAwarePostEdit}
+                                                        checked={effectiveTopicAwarePostEditEnabled}
+                                                        disabled={fastTranslationEnabled}
                                                         onChange={e => setProviderSettings(prev => ({
                                                             ...prev,
                                                             enableTopicAwarePostEdit: e.target.checked,

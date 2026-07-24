@@ -809,6 +809,10 @@ func (s *sseEventSink) Chunk(payload llm.TranslationChunkPayload) {
 	s.send("chunk", payload)
 }
 
+func (s *sseEventSink) Page(payload llm.TranslationPagePayload) {
+	s.send("page", payload)
+}
+
 func (s *sseEventSink) Clear() {
 	s.send("clear", map[string]any{"ok": true})
 }

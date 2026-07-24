@@ -50,6 +50,10 @@ export function ReadDebugStudioState() {
   return window['go']['app']['App']['ReadDebugStudioState']();
 }
 
+export function RecoverPDFCheckpoint() {
+  return window['go']['app']['App']['RecoverPDFCheckpoint']();
+}
+
 export function SaveFile(arg1) {
   return window['go']['app']['App']['SaveFile'](arg1);
 }
