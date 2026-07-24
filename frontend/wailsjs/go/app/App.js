@@ -38,6 +38,10 @@ export function OpenDebugStudioWindow() {
   return window['go']['app']['App']['OpenDebugStudioWindow']();
 }
 
+export function OpenDocument() {
+  return window['go']['app']['App']['OpenDocument']();
+}
+
 export function OpenFile() {
   return window['go']['app']['App']['OpenFile']();
 }

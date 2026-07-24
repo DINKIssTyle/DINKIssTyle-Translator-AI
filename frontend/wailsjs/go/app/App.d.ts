@@ -3,6 +3,7 @@
 import {pdfengine} from '../models';
 import {llm} from '../models';
 import {app} from '../models';
+import {file} from '../models';
 
 export function CancelTranslation():Promise<void>;
 
@@ -21,6 +22,8 @@ export function GetWindowMode():Promise<string>;
 export function OpenCertificateFolder():Promise<void>;
 
 export function OpenDebugStudioWindow():Promise<void>;
+
+export function OpenDocument():Promise<file.OpenedDocument>;
 
 export function OpenFile():Promise<string>;
 

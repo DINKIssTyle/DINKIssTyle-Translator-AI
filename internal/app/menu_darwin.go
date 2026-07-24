@@ -15,18 +15,18 @@ func GetMenu(app *App) *menu.Menu {
 	// macOS Native App Menu
 	AppMenu.Append(menu.AppMenu())
 
-	// Edit Menu (Essential for Clipboard on macOS)
-	AppMenu.Append(menu.EditMenu())
-
 	// File Menu
 	fileMenu := AppMenu.AddSubmenu("File")
-	fileMenu.AddText("Open Text File", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
+	fileMenu.AddText("Open File…", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
 		runtime.EventsEmit(app.ctx, "menu:open-file")
 	})
 	fileMenu.AddSeparator()
 	fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		runtime.Quit(app.ctx)
 	})
+
+	// Edit Menu (Essential for Clipboard on macOS)
+	AppMenu.Append(menu.EditMenu())
 
 	viewMenu := AppMenu.AddSubmenu("View")
 	viewMenu.AddText("Decrease Font Size", keys.CmdOrCtrl("-"), func(_ *menu.CallbackData) {

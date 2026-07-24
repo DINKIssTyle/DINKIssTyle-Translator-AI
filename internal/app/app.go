@@ -106,6 +106,17 @@ func (a *App) OpenFile() (string, error) {
 	return a.file.OpenFile()
 }
 
+func (a *App) OpenDocument() (file.OpenedDocument, error) {
+	document, err := a.file.OpenDocument()
+	if err != nil || document.Kind != "pdf" || document.PDF.PageCount == 0 {
+		return document, err
+	}
+	a.pdfMu.Lock()
+	a.activePDF = document.PDF
+	a.pdfMu.Unlock()
+	return document, nil
+}
+
 func (a *App) OpenPDF() (file.PDFDocument, error) {
 	document, err := a.file.OpenPDF()
 	if err != nil || document.PageCount == 0 {

@@ -48,9 +48,14 @@ function PDFPageCanvas({
 }) {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const renderGenerationRef = useRef(0);
+    const renderQueueRef = useRef<Promise<void>>(Promise.resolve());
+    const retryCountRef = useRef(0);
+    const hasRenderedRef = useRef(false);
     const [isVisible, setIsVisible] = useState(pageNumber <= 2);
     const [aspectRatio, setAspectRatio] = useState(1.414);
     const [renderError, setRenderError] = useState("");
+    const [renderRevision, setRenderRevision] = useState(0);
 
     useEffect(() => {
         const node = wrapperRef.current;
@@ -66,53 +71,94 @@ function PDFPageCanvas({
     }, [isVisible]);
 
     useEffect(() => {
+        retryCountRef.current = 0;
+        setRenderError("");
+    }, [availableWidth, document, isVisible, pageNumber, zoom]);
+
+    useEffect(() => {
+        hasRenderedRef.current = false;
+        const canvas = canvasRef.current;
+        canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    }, [document, pageNumber]);
+
+    useEffect(() => {
         if (!isVisible || !document || !canvasRef.current || availableWidth <= 0) return;
-        let cancelled = false;
-        let renderTask: any = null;
+        const generation = renderGenerationRef.current + 1;
+        renderGenerationRef.current = generation;
+        let active = true;
+        let retryTimer: number | null = null;
+
         const renderPage = async () => {
-            try {
-                const page = await document.getPage(pageNumber);
-                if (cancelled) return;
-                const naturalViewport = page.getViewport({ scale: 1 });
-                setAspectRatio(naturalViewport.height / naturalViewport.width);
-                const cssScale = Math.max(0.15, (availableWidth / naturalViewport.width) * zoom);
-                const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-                const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
-                // Render into a per-task offscreen canvas. Resize/scroll events can
-                // cancel one PDF.js task and start the next before cancellation has
-                // fully settled; sharing the visible canvas between those tasks
-                // causes PDF.js to reject the newer render.
-                const renderCanvas = window.document.createElement("canvas");
-                renderCanvas.width = Math.floor(renderViewport.width);
-                renderCanvas.height = Math.floor(renderViewport.height);
-                const context = renderCanvas.getContext("2d", { alpha: false });
-                if (!context) throw new Error("Canvas is unavailable.");
-                renderTask = page.render({ canvasContext: context, viewport: renderViewport });
-                await renderTask.promise;
-                if (cancelled) return;
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                canvas.width = renderCanvas.width;
-                canvas.height = renderCanvas.height;
-                canvas.style.width = `${Math.floor(naturalViewport.width * cssScale)}px`;
-                canvas.style.height = `${Math.floor(naturalViewport.height * cssScale)}px`;
-                const visibleContext = canvas.getContext("2d", { alpha: false });
-                if (!visibleContext) throw new Error("Canvas is unavailable.");
-                visibleContext.drawImage(renderCanvas, 0, 0);
-                setRenderError("");
-            } catch (error: any) {
-                if (!cancelled && error?.name !== "RenderingCancelledException") {
-                    console.error(`Could not render PDF page ${pageNumber}:`, error);
+            if (!active || generation !== renderGenerationRef.current) return;
+            const page = await document.getPage(pageNumber);
+            if (!active || generation !== renderGenerationRef.current) return;
+            const naturalViewport = page.getViewport({ scale: 1 });
+            setAspectRatio(naturalViewport.height / naturalViewport.width);
+            const cssScale = Math.max(0.15, (availableWidth / naturalViewport.width) * zoom);
+            const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+            const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
+            // Render requests for a page are serialized below. Each request still
+            // gets an offscreen canvas so only the newest completed result ever
+            // touches the visible canvas.
+            const renderCanvas = window.document.createElement("canvas");
+            renderCanvas.width = Math.floor(renderViewport.width);
+            renderCanvas.height = Math.floor(renderViewport.height);
+            const context = renderCanvas.getContext("2d", { alpha: false });
+            if (!context) throw new Error("Canvas is unavailable.");
+            await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+            if (!active || generation !== renderGenerationRef.current) return;
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            canvas.width = renderCanvas.width;
+            canvas.height = renderCanvas.height;
+            canvas.style.width = `${Math.floor(naturalViewport.width * cssScale)}px`;
+            canvas.style.height = `${Math.floor(naturalViewport.height * cssScale)}px`;
+            const visibleContext = canvas.getContext("2d", { alpha: false });
+            if (!visibleContext) throw new Error("Canvas is unavailable.");
+            visibleContext.drawImage(renderCanvas, 0, 0);
+            hasRenderedRef.current = true;
+            retryCountRef.current = 0;
+            setRenderError("");
+        };
+
+        renderQueueRef.current = renderQueueRef.current
+            .catch(() => undefined)
+            .then(renderPage)
+            .catch((error: any) => {
+                if (!active || generation !== renderGenerationRef.current || error?.name === "RenderingCancelledException") {
+                    return;
+                }
+                if (retryCountRef.current < 2) {
+                    retryCountRef.current += 1;
+                    retryTimer = window.setTimeout(() => {
+                        if (active && generation === renderGenerationRef.current) {
+                            setRenderRevision(value => value + 1);
+                        }
+                    }, retryCountRef.current * 100);
+                    return;
+                }
+                console.error(`Could not render PDF page ${pageNumber}:`, error);
+                if (!hasRenderedRef.current) {
                     setRenderError(String(error));
                 }
+            });
+
+        return () => {
+            active = false;
+            if (retryTimer !== null) {
+                window.clearTimeout(retryTimer);
+            }
+            if (generation === renderGenerationRef.current) {
+                renderGenerationRef.current += 1;
             }
         };
-        void renderPage();
-        return () => {
-            cancelled = true;
-            renderTask?.cancel?.();
-        };
-    }, [availableWidth, document, isVisible, pageNumber, zoom]);
+    }, [availableWidth, document, isVisible, pageNumber, renderRevision, zoom]);
+
+    const retryRender = () => {
+        retryCountRef.current = 0;
+        setRenderError("");
+        setRenderRevision(value => value + 1);
+    };
 
     const placeholderWidth = Math.max(240, availableWidth * zoom);
     return (
@@ -123,10 +169,12 @@ function PDFPageCanvas({
             style={{ minHeight: `${Math.min(1200, placeholderWidth * aspectRatio)}px` }}
         >
             <div className="pdf-page-number">{pageNumber}</div>
-            {renderError ? (
-                <div className="pdf-preview-error">Could not render page {pageNumber}.</div>
-            ) : (
-                <canvas ref={canvasRef} className={`pdf-page-canvas ${isVisible ? "is-visible" : ""}`} />
+            <canvas ref={canvasRef} className={`pdf-page-canvas ${isVisible ? "is-visible" : ""}`} />
+            {renderError && (
+                <div className="pdf-preview-error pdf-page-render-error">
+                    <span>Could not render page {pageNumber}.</span>
+                    <button type="button" onClick={retryRender}>Retry</button>
+                </div>
             )}
         </div>
     );

@@ -14,6 +14,7 @@ import {
     GetModels,
     OpenCertificateFolder,
     OpenDebugStudioWindow,
+    OpenDocument,
     Translate,
     SaveWebServerSettings,
     OpenFile,
@@ -225,6 +226,13 @@ type PDFCheckpointRecoveryData = {
     error?: string;
 };
 
+type OpenedDocumentData = {
+    kind: "text" | "pdf" | "";
+    name: string;
+    text?: string;
+    pdf: PDFDocumentData;
+};
+
 const STORAGE_KEY = "dkst-translator-ai-settings";
 const SOURCE_LANGUAGES = ["auto", "English", "Korean", "Japanese", "Chinese", "French", "German"];
 const TARGET_LANGUAGES = ["Korean", "English", "Japanese", "Chinese", "French", "German"];
@@ -274,6 +282,11 @@ const INSTRUCTION_PRESETS = [
         id: "precision",
         label: "Precision & Consistency",
         instruction: "Focus on technical accuracy and stylistic consistency. Maintain the formal tone of the source text and ensure that specialized terms are translated consistently throughout. If a term is a globally recognized industry standard, prioritize the most commonly accepted technical equivalent in the target language.",
+    },
+    {
+        id: "academic-paper",
+        label: "Academic Paper",
+        instruction: "Translate in a formal academic style appropriate for scholarly papers. Preserve the original meaning, logical structure, degree of certainty, and distinctions between claims, evidence, and limitations. Use field-standard terminology consistently, and retain abbreviations, equations, symbols, citations, references, and figure or table labels accurately. Do not add, omit, summarize, or simplify content.",
     },
     {
         id: "concise",
@@ -598,17 +611,6 @@ function estimateTimedOverallProgress(progressState: Required<ProgressPayload>, 
     }
 
     return Math.max(baseOverall, Math.min(1, nextOverall));
-}
-
-function deriveStageRingProgress(stage: string, progress: number): number {
-    const safeProgress = Math.max(0, Math.min(1, progress || 0));
-    if (stage === "model_load") {
-        return Math.max(0, Math.min(1, safeProgress / 0.35));
-    }
-    if (stage === "prompt_processing") {
-        return Math.max(0, Math.min(1, (safeProgress - 0.4) / 0.4));
-    }
-    return safeProgress;
 }
 
 function sanitizeTranslation(raw: string): string {
@@ -1475,17 +1477,12 @@ function App() {
     const instructionPresetValue = selectedInstructionPreset?.id || "custom";
     const reasoningLabel = providerSettings.reasoning || "Auto";
     const usesStageRing = progressState.stage === "model_load" || progressState.stage === "prompt_processing";
-    const stageRingProgress = deriveStageRingProgress(progressState.stage, progressState.progress);
-    const displayedProgressValue = usesStageRing ? stageRingProgress : estimatedOverallProgress;
+    const displayedProgressValue = estimatedOverallProgress;
     const clampedAnimatedProgressValue = Math.max(0, Math.min(1, animatedProgressValue || 0));
     const progressPercent = Math.max(0, Math.min(100, Math.round(clampedAnimatedProgressValue * 100)));
     const progressRingRadius = 28;
     const progressRingCircumference = 2 * Math.PI * progressRingRadius;
     const progressRingOffset = progressRingCircumference * (1 - clampedAnimatedProgressValue);
-    const progressRingColor = usesStageRing ? "var(--progress-stage)" : "var(--accent)";
-    const progressRingCaption = usesStageRing
-        ? (progressState.stage === "model_load" ? "Model" : "Prompt")
-        : "Overall";
     const renderedChunks = renderedChunksRef.current;
     const shouldRenderLayeredChunks = renderedChunks.some(chunk => chunk && (chunk.showDraftSkeleton || chunk.phase === "final"));
 
@@ -3016,23 +3013,45 @@ function App() {
         });
     };
 
+    const loadPDFIntoWorkspace = (document: PDFDocumentData) => {
+        resetTranslationPresentation();
+        translatedPDFBuildIDRef.current += 1;
+        setTranslatedPDF(null);
+        setCompletedPDFPages(0);
+        setPDFDocument(document);
+        setSourceText(document.sourceText || "");
+        setStatusMessage(`Loaded ${document.name} (${document.pageCount} pages).`);
+        announceAction(`Loaded PDF: ${document.name}`);
+    };
+
     const handleOpenFile = async () => {
         if (isBrowserMode) {
             announceAction("Opening local files is only available in the desktop app.");
             return;
         }
+        if (isTranslating) {
+            announceAction("Cancel the active translation before opening another file.");
+            return;
+        }
         try {
-            const content = await OpenFile();
-            if (content) {
-                if (pdfDocument) resetTranslationPresentation();
-                setPDFDocument(null);
-                setTranslatedPDF(null);
-                setCompletedPDFPages(0);
-                setSourceText(content);
-                announceAction("Loaded file content into the source editor.");
+            const opened = await OpenDocument() as OpenedDocumentData;
+            if (opened?.kind === "pdf" && opened.pdf?.dataBase64) {
+                loadPDFIntoWorkspace(opened.pdf);
+                return;
             }
+            if (opened?.kind !== "text") return;
+            resetTranslationPresentation();
+            translatedPDFBuildIDRef.current += 1;
+            setPDFDocument(null);
+            setTranslatedPDF(null);
+            setCompletedPDFPages(0);
+            setSourceText(opened.text || "");
+            setStatusMessage(`Loaded ${opened.name}.`);
+            announceAction(`Loaded file: ${opened.name}`);
         } catch (err: any) {
             console.error(err);
+            setStatusMessage(`Could not open file: ${String(err)}`);
+            alert("Could not open file: " + err);
         }
     };
 
@@ -3048,14 +3067,7 @@ function App() {
         try {
             const document = await OpenPDF() as PDFDocumentData;
             if (!document?.dataBase64) return;
-            resetTranslationPresentation();
-            translatedPDFBuildIDRef.current += 1;
-            setTranslatedPDF(null);
-            setCompletedPDFPages(0);
-            setPDFDocument(document);
-            setSourceText(document.sourceText || "");
-            setStatusMessage(`Loaded ${document.name} (${document.pageCount} pages).`);
-            announceAction(`Loaded PDF: ${document.name}`);
+            loadPDFIntoWorkspace(document);
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not open PDF: ${String(err)}`);
@@ -3829,7 +3841,7 @@ function App() {
                                 <textarea
                                     ref={sourceInputRef}
                                     style={{ fontSize: `${editorFontSize}px` }}
-                                    placeholder="Paste or open source text..."
+                                    placeholder="Paste text or open the following files: Plain Text (.TXT), Markdown (.MD), PDF file"
                                     value={sourceText}
                                     onChange={e => setSourceText(e.target.value)}
                                 />
@@ -3880,42 +3892,42 @@ function App() {
                                     </div>
                                 )
                             ) : (
-                            <div className="translation-output markdown-output" ref={outputRef} onCopy={handleTranslationCopyEvent} style={{ fontSize: `${editorFontSize}px` }}>
-                                {shouldRenderLayeredChunks ? (
-                                    <div className="translation-stream-layered" data-version={chunkPresentationVersion}>
-                                        {renderedChunks.map((chunk, index) => {
-                                            if (!chunk || (!chunk.displayedText && !chunk.draftText)) {
-                                                return null;
-                                            }
-                                            const showSkeleton = Boolean(chunk.showDraftSkeleton && chunk.draftText);
-                                            return (
-                                                <div
-                                                    key={`chunk-${index}`}
-                                                    className={`translation-stream-chunk ${showSkeleton ? "has-skeleton" : ""}`}
-                                                >
-                                                    {showSkeleton && (
-                                                        <div
-                                                            className={`translation-stream-draft ${chunk.skeletonHiding ? "is-hiding" : ""}`}
-                                                            aria-hidden="true"
-                                                        >
-                                                            {chunk.draftText}
+                                <div className="translation-output markdown-output" ref={outputRef} onCopy={handleTranslationCopyEvent} style={{ fontSize: `${editorFontSize}px` }}>
+                                    {shouldRenderLayeredChunks ? (
+                                        <div className="translation-stream-layered" data-version={chunkPresentationVersion}>
+                                            {renderedChunks.map((chunk, index) => {
+                                                if (!chunk || (!chunk.displayedText && !chunk.draftText)) {
+                                                    return null;
+                                                }
+                                                const showSkeleton = Boolean(chunk.showDraftSkeleton && chunk.draftText);
+                                                return (
+                                                    <div
+                                                        key={`chunk-${index}`}
+                                                        className={`translation-stream-chunk ${showSkeleton ? "has-skeleton" : ""}`}
+                                                    >
+                                                        {showSkeleton && (
+                                                            <div
+                                                                className={`translation-stream-draft ${chunk.skeletonHiding ? "is-hiding" : ""}`}
+                                                                aria-hidden="true"
+                                                            >
+                                                                {chunk.draftText}
+                                                            </div>
+                                                        )}
+                                                        <div className={`translation-stream-final ${showSkeleton ? "is-overlaying" : ""}`}>
+                                                            {chunk.displayedText}
                                                         </div>
-                                                    )}
-                                                    <div className={`translation-stream-final ${showSkeleton ? "is-overlaying" : ""}`}>
-                                                        {chunk.displayedText}
                                                     </div>
-                                                </div>
-                                            );
-                                        })}
-                                        {isTranslating && <span className="cursor">|</span>}
-                                    </div>
-                                ) : (
-                                    <>
-                                        {renderMarkdown(translation)}
-                                        {isTranslating && <span className="cursor">|</span>}
-                                    </>
-                                )}
-                            </div>
+                                                );
+                                            })}
+                                            {isTranslating && <span className="cursor">|</span>}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {renderMarkdown(translation)}
+                                            {isTranslating && <span className="cursor">|</span>}
+                                        </>
+                                    )}
+                                </div>
                             )}
                             {!pdfDocument && translationSearchQuery && translationSearchMatchCount > 0 && (
                                 <div className="translation-search-nav" role="status" aria-live="polite">
@@ -4743,15 +4755,21 @@ function App() {
                                     cy="36"
                                     r={progressRingRadius}
                                     style={{
-                                        stroke: progressRingColor,
+                                        stroke: "var(--accent)",
                                         strokeDasharray: progressRingCircumference,
                                         strokeDashoffset: progressRingOffset,
                                     }}
                                 />
                             </svg>
+                            {usesStageRing && (
+                                <svg className="progress-stage-spinner" viewBox="0 0 44 44" aria-hidden="true">
+                                    <circle className="progress-stage-spinner-track" cx="22" cy="22" r="17" />
+                                    <circle className="progress-stage-spinner-arc" cx="22" cy="22" r="17" />
+                                </svg>
+                            )}
                             <div className="progress-ring-inner">
                                 <div className="progress-ring-value">{progressPercent}%</div>
-                                {progressRingCaption && <div className="progress-ring-caption">{progressRingCaption}</div>}
+                                <div className="progress-ring-caption">Overall</div>
                             </div>
                         </div>
                         <div className="progress-content">
@@ -4761,7 +4779,7 @@ function App() {
                                         {progressState.label || "Working..."}
                                     </span>
                                 </div>
-                                {isTranslating && (
+                                {progressState.visible && progressState.stage !== "done" && (
                                     <button className="progress-cancel-btn" onClick={handleCancel} title="Stop Translation">
                                         <span className="material-symbols-outlined">close</span>
                                     </button>
