@@ -4,14 +4,11 @@ package main
 
 import (
 	"embed"
-	"os"
+	"log"
 
 	"dinkisstyle-translator/internal/app"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
@@ -22,43 +19,42 @@ func main() {
 	windowTitle := "DKST Translator AI"
 	windowWidth := 1200
 	windowHeight := 800
-	if len(os.Args) > 1 && os.Args[1] == "--debug-studio-window" {
+	if isDebugStudioRequested() {
 		mode = "debug-studio"
 		windowTitle = "DKST Translator AI Debug Studio"
 		windowWidth = 1640
 		windowHeight = 1080
 	}
 
-	// Create an instance of the app structure
-	a := app.NewApp(mode, assets)
-
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:     windowTitle,
-		Width:     windowWidth,
-		Height:    windowHeight,
-		MinWidth:  350,
-		MinHeight: 700,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	wailsApp := application.New(application.Options{
+		Name:        "DKST Translator AI",
+		Description: "Professional AI Local LLM Translation Tool built with Wails.",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        a.Startup,
-		OnShutdown:       a.Shutdown,
-		Bind: []interface{}{
-			a,
-		},
-		Menu: app.GetMenu(a),
-		Mac: &mac.Options{
-			TitleBar: mac.TitleBarDefault(),
-			About: &mac.AboutInfo{
-				Title:   "DKST Translator AI",
-				Message: "Professional AI Local LLM Translation Tool built with Wails.",
-			},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
 
-	if err != nil {
-		println("Error:", err.Error())
+	a := app.NewApp(mode, assets, wailsApp)
+	wailsApp.RegisterService(application.NewService(a))
+	wailsApp.Menu.Set(app.GetMenu(wailsApp))
+	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:               mode,
+		Title:              windowTitle,
+		Width:              windowWidth,
+		Height:             windowHeight,
+		MinWidth:           350,
+		MinHeight:          700,
+		BackgroundColour:   application.NewRGB(27, 38, 54),
+		UseApplicationMenu: true,
+		Mac: application.MacWindow{
+			TitleBar: application.MacTitleBarDefault,
+		},
+	})
+
+	if err := wailsApp.Run(); err != nil {
+		log.Fatal(err)
 	}
 }

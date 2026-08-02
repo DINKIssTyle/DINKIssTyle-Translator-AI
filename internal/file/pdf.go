@@ -20,7 +20,7 @@ import (
 	"dinkisstyle-translator/internal/pdfengine"
 	pdfreader "github.com/ledongthuc/pdf"
 	"github.com/signintech/gopdf"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const (
@@ -57,12 +57,12 @@ func (cleanroomPDFEngine) Compose(request pdfengine.ComposeRequest) (pdfengine.R
 var defaultPDFEngine = newCleanroomPDFEngine()
 
 func (f *FileHandler) OpenPDF() (PDFDocument, error) {
-	selection, err := wailsruntime.OpenFileDialog(f.ctx, wailsruntime.OpenDialogOptions{
+	selection, err := f.app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title: "Select PDF Document",
-		Filters: []wailsruntime.FileFilter{
+		Filters: []application.FileFilter{
 			{DisplayName: "PDF Documents (*.pdf)", Pattern: "*.pdf"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return PDFDocument{}, err
 	}
@@ -1288,13 +1288,13 @@ func (f *FileHandler) SavePDF(dataBase64, defaultFilename string) (string, error
 	if strings.TrimSpace(defaultFilename) == "" {
 		defaultFilename = "translation.pdf"
 	}
-	selection, err := wailsruntime.SaveFileDialog(f.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "Save Translated PDF",
-		DefaultFilename: filepath.Base(defaultFilename),
-		Filters: []wailsruntime.FileFilter{
+	selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    "Save Translated PDF",
+		Filename: filepath.Base(defaultFilename),
+		Filters: []application.FileFilter{
 			{DisplayName: "PDF Documents (*.pdf)", Pattern: "*.pdf"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", err
 	}

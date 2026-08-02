@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 var (
@@ -37,6 +35,7 @@ type Client struct {
 	cancel      context.CancelFunc
 	active      uint64
 	requestSink eventSink
+	emit        func(string, ...any) bool
 }
 
 type eventSink interface {
@@ -54,8 +53,9 @@ func NewClient() *Client {
 	return &Client{}
 }
 
-func (c *Client) SetContext(ctx context.Context) {
+func (c *Client) SetRuntime(ctx context.Context, emit func(string, ...any) bool) {
 	c.ctx = ctx
+	c.emit = emit
 }
 
 func (c *Client) beginRequest() (context.Context, context.CancelFunc, uint64) {
@@ -3189,10 +3189,10 @@ func (c *Client) currentSink() eventSink {
 	if c.requestSink != nil {
 		return c.requestSink
 	}
-	if c.ctx == nil {
+	if c.emit == nil {
 		return nil
 	}
-	return runtimeEventSink{ctx: c.ctx}
+	return runtimeEventSink{emit: c.emit}
 }
 
 func (c *Client) emitToken(token string) {
@@ -3302,39 +3302,39 @@ func (c *Client) emitDebug(direction string, endpoint string, payload any) {
 }
 
 type runtimeEventSink struct {
-	ctx context.Context
+	emit func(string, ...any) bool
 }
 
 func (s runtimeEventSink) Token(token string) {
-	runtime.EventsEmit(s.ctx, "translation:token", token)
+	s.emit("translation:token", token)
 }
 
 func (s runtimeEventSink) Chunk(payload TranslationChunkPayload) {
-	runtime.EventsEmit(s.ctx, "translation:chunk", payload)
+	s.emit("translation:chunk", payload)
 }
 
 func (s runtimeEventSink) Page(payload TranslationPagePayload) {
-	runtime.EventsEmit(s.ctx, "translation:page", payload)
+	s.emit("translation:page", payload)
 }
 
 func (s runtimeEventSink) Clear() {
-	runtime.EventsEmit(s.ctx, "translation:clear")
+	s.emit("translation:clear")
 }
 
 func (s runtimeEventSink) Complete(payload TranslationCompletePayload) {
-	runtime.EventsEmit(s.ctx, "translation:complete", payload)
+	s.emit("translation:complete", payload)
 }
 
 func (s runtimeEventSink) Progress(payload TranslationProgressPayload) {
-	runtime.EventsEmit(s.ctx, "translation:progress", payload)
+	s.emit("translation:progress", payload)
 }
 
 func (s runtimeEventSink) Stats(payload TranslationStatsPayload) {
-	runtime.EventsEmit(s.ctx, "translation:stats", payload)
+	s.emit("translation:stats", payload)
 }
 
 func (s runtimeEventSink) Debug(direction string, endpoint string, payload string) {
-	runtime.EventsEmit(s.ctx, "translation:debug", map[string]string{
+	s.emit("translation:debug", map[string]string{
 		"direction": direction,
 		"endpoint":  endpoint,
 		"payload":   payload,

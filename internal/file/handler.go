@@ -3,18 +3,17 @@
 package file
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"dinkisstyle-translator/internal/pdfengine"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type FileHandler struct {
-	ctx       context.Context
+	app       *application.App
 	pdfEngine pdfengine.Engine
 }
 
@@ -25,23 +24,19 @@ type OpenedDocument struct {
 	PDF  PDFDocument `json:"pdf"`
 }
 
-func NewFileHandler() *FileHandler {
-	return &FileHandler{pdfEngine: newCleanroomPDFEngine()}
-}
-
-func (f *FileHandler) SetContext(ctx context.Context) {
-	f.ctx = ctx
+func NewFileHandler(app *application.App) *FileHandler {
+	return &FileHandler{app: app, pdfEngine: newCleanroomPDFEngine()}
 }
 
 // OpenFile opens a system dialog to select a text/markdown file
 func (f *FileHandler) OpenFile() (string, error) {
-	selection, err := runtime.OpenFileDialog(f.ctx, runtime.OpenDialogOptions{
+	selection, err := f.app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title: "Select Text File",
-		Filters: []runtime.FileFilter{
+		Filters: []application.FileFilter{
 			{DisplayName: "Text Files (*.txt;*.md)", Pattern: "*.txt;*.md"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", err
 	}
@@ -60,14 +55,14 @@ func (f *FileHandler) OpenFile() (string, error) {
 // OpenDocument opens text, Markdown, and PDF files from one picker and returns
 // the appropriate document representation for the selected extension.
 func (f *FileHandler) OpenDocument() (OpenedDocument, error) {
-	selection, err := runtime.OpenFileDialog(f.ctx, runtime.OpenDialogOptions{
+	selection, err := f.app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title: "Open File",
-		Filters: []runtime.FileFilter{
+		Filters: []application.FileFilter{
 			{DisplayName: "Supported Documents (*.txt;*.md;*.pdf)", Pattern: "*.txt;*.md;*.pdf"},
 			{DisplayName: "Text and Markdown (*.txt;*.md)", Pattern: "*.txt;*.md"},
 			{DisplayName: "PDF Documents (*.pdf)", Pattern: "*.pdf"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return OpenedDocument{}, err
 	}
@@ -95,14 +90,14 @@ func (f *FileHandler) OpenDocument() (OpenedDocument, error) {
 
 // SaveFile saves text to a file (optional but good for translation results)
 func (f *FileHandler) SaveFile(content string) (string, error) {
-	selection, err := runtime.SaveFileDialog(f.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Translation",
-		DefaultFilename: "translation.txt",
-		Filters: []runtime.FileFilter{
+	selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    "Save Translation",
+		Filename: "translation.txt",
+		Filters: []application.FileFilter{
 			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
 			{DisplayName: "Markdown Files (*.md)", Pattern: "*.md"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil {
 		return "", err
 	}

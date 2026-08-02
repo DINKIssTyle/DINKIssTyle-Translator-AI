@@ -6,20 +6,17 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
-	"os"
-	"os/exec"
 	"sync"
 	"time"
 
-	"dinkisstyle-translator/internal/debugsync"
 	"dinkisstyle-translator/internal/file"
 	"dinkisstyle-translator/internal/llm"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App struct
 type App struct {
-	ctx               context.Context
+	wails             *application.App
 	mode              string
 	assets            fs.FS
 	llm               *llm.Client
@@ -39,31 +36,31 @@ type App struct {
 }
 
 // NewApp creates a new App application struct
-func NewApp(mode string, assets fs.FS) *App {
+func NewApp(mode string, assets fs.FS, wailsApp *application.App) *App {
 	return &App{
+		wails:             wailsApp,
 		mode:              mode,
 		assets:            assets,
 		llm:               llm.NewClient(),
 		webLLM:            llm.NewClient(),
-		file:              file.NewFileHandler(),
+		file:              file.NewFileHandler(wailsApp),
 		hostSettings:      loadPersistedHostProviderSettings(),
 		webServerSettings: loadPersistedWebServerSettings(),
 		webSessions:       make(map[string]time.Time),
 	}
 }
 
-// Startup is called when the app starts.
-func (a *App) Startup(ctx context.Context) {
-	a.ctx = ctx
-	a.llm.SetContext(ctx)
-	a.webLLM.SetContext(ctx)
-	a.file.SetContext(ctx)
+// ServiceStartup is called by Wails when the service starts.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.llm.SetRuntime(ctx, a.wails.Event.Emit)
+	a.webLLM.SetRuntime(ctx, a.wails.Event.Emit)
 	if a.mode == "main" && a.webServerSettings.Enabled {
 		_ = a.applyWebServerSettings()
 	}
+	return nil
 }
 
-func (a *App) Shutdown(context.Context) {
+func (a *App) ServiceShutdown() error {
 	a.llm.CancelTranslation()
 	a.pdfRunMu.Lock()
 	a.pdfRunMu.Unlock()
@@ -72,6 +69,7 @@ func (a *App) Shutdown(context.Context) {
 	a.webServerMu.Lock()
 	defer a.webServerMu.Unlock()
 	_ = a.stopWebServerLocked()
+	return nil
 }
 
 // GetModels returns the list of models from the configured provider endpoint.
@@ -142,38 +140,18 @@ func (a *App) SavePDF(dataBase64 string, defaultFilename string) (string, error)
 }
 
 func (a *App) ConfirmClearSource() (bool, error) {
-	selection, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
-		Type:          runtime.QuestionDialog,
-		Title:         "Clear Source Text",
-		Message:       "Clear the source text?",
-		Buttons:       []string{"Clear", "Cancel"},
-		DefaultButton: "Cancel",
-		CancelButton:  "Cancel",
-	})
-	if err != nil {
-		return false, err
-	}
-	return selection == "Clear", nil
+	confirmed := false
+	dialog := a.wails.Dialog.Question().
+		SetTitle("Clear Source Text").
+		SetMessage("Clear the source text?")
+	dialog.AddButton("Clear").OnClick(func() { confirmed = true })
+	cancel := dialog.AddButton("Cancel")
+	dialog.SetDefaultButton(cancel)
+	dialog.SetCancelButton(cancel)
+	dialog.Show()
+	return confirmed, nil
 }
 
 func (a *App) GetWindowMode() string {
 	return a.mode
-}
-
-func (a *App) ReadDebugStudioState() (string, error) {
-	return debugsync.Read()
-}
-
-func (a *App) WriteDebugStudioState(state string) error {
-	return debugsync.Write(state)
-}
-
-func (a *App) OpenDebugStudioWindow() error {
-	executablePath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	cmd := exec.Command(executablePath, "--debug-studio-window")
-	return cmd.Start()
 }

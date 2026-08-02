@@ -15,7 +15,6 @@ import (
 	"dinkisstyle-translator/internal/file"
 	"dinkisstyle-translator/internal/llm"
 	"dinkisstyle-translator/internal/pdfengine"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -263,24 +262,24 @@ func (a *App) translatePDF(req llm.TranslationRequest) error {
 }
 
 func (s *pdfTranslationSink) Token(token string) {
-	runtime.EventsEmit(s.app.ctx, "translation:token", token)
+	s.app.wails.Event.Emit("translation:token", token)
 }
 
 func (s *pdfTranslationSink) Chunk(payload llm.TranslationChunkPayload) {
-	runtime.EventsEmit(s.app.ctx, "translation:chunk", payload)
+	s.app.wails.Event.Emit("translation:chunk", payload)
 }
 
 func (s *pdfTranslationSink) Page(payload llm.TranslationPagePayload) {
 	completedPages := s.completedPagesIncludingEmptyFollowers(payload.PageNumber)
 	result, err := s.commit(payload.TranslatedText, completedPages, "in_progress")
 	if err != nil {
-		runtime.EventsEmit(s.app.ctx, "translation:pdf-page-error", map[string]any{
+		s.app.wails.Event.Emit("translation:pdf-page-error", map[string]any{
 			"pageNumber": payload.PageNumber,
 			"message":    err.Error(),
 		})
 		return
 	}
-	runtime.EventsEmit(s.app.ctx, "translation:pdf-page", pdfPageReadyPayload{
+	s.app.wails.Event.Emit("translation:pdf-page", pdfPageReadyPayload{
 		PageNumber:     payload.PageNumber,
 		CompletedPages: completedPages,
 		TotalPages:     s.document.PageCount,
@@ -289,19 +288,19 @@ func (s *pdfTranslationSink) Page(payload llm.TranslationPagePayload) {
 }
 
 func (s *pdfTranslationSink) Clear() {
-	runtime.EventsEmit(s.app.ctx, "translation:clear")
+	s.app.wails.Event.Emit("translation:clear")
 }
 
 func (s *pdfTranslationSink) Complete(payload llm.TranslationCompletePayload) {
 	if s.manifest.CompletedPages < s.document.PageCount {
 		result, err := s.commit(payload.Text, s.document.PageCount, "completed")
 		if err != nil {
-			runtime.EventsEmit(s.app.ctx, "translation:pdf-page-error", map[string]any{
+			s.app.wails.Event.Emit("translation:pdf-page-error", map[string]any{
 				"pageNumber": s.document.PageCount,
 				"message":    err.Error(),
 			})
 		} else {
-			runtime.EventsEmit(s.app.ctx, "translation:pdf-page", pdfPageReadyPayload{
+			s.app.wails.Event.Emit("translation:pdf-page", pdfPageReadyPayload{
 				PageNumber:     s.document.PageCount,
 				CompletedPages: s.document.PageCount,
 				TotalPages:     s.document.PageCount,
@@ -315,19 +314,19 @@ func (s *pdfTranslationSink) Complete(payload llm.TranslationCompletePayload) {
 		_ = s.store.saveManifest(s.manifest)
 		s.app.pdfCheckpointMu.Unlock()
 	}
-	runtime.EventsEmit(s.app.ctx, "translation:complete", payload)
+	s.app.wails.Event.Emit("translation:complete", payload)
 }
 
 func (s *pdfTranslationSink) Progress(payload llm.TranslationProgressPayload) {
-	runtime.EventsEmit(s.app.ctx, "translation:progress", payload)
+	s.app.wails.Event.Emit("translation:progress", payload)
 }
 
 func (s *pdfTranslationSink) Stats(payload llm.TranslationStatsPayload) {
-	runtime.EventsEmit(s.app.ctx, "translation:stats", payload)
+	s.app.wails.Event.Emit("translation:stats", payload)
 }
 
 func (s *pdfTranslationSink) Debug(direction string, endpoint string, payload string) {
-	runtime.EventsEmit(s.app.ctx, "translation:debug", map[string]string{
+	s.app.wails.Event.Emit("translation:debug", map[string]string{
 		"direction": direction,
 		"endpoint":  endpoint,
 		"payload":   payload,

@@ -58,33 +58,33 @@ Mobile Screen
 ## Development & Build
 
 ### Prerequisites
-- [Go](https://go.dev/) (1.21+)
+- [Go](https://go.dev/) (1.25+)
 - [Node.js](https://nodejs.org/) & NPM
-- [Wails CLI](https://wails.io/docs/gettingstarted/installation) (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)
+- [Wails v3 CLI](https://v3.wails.io/quick-start/installation/) (`go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.1`)
 - A Unicode TrueType font for translated PDF generation (Noto Sans CJK is recommended on Linux; macOS and Windows use compatible system fonts when available)
 
 ### Live Development
 To run in live development mode with hot-reloading:
 ```bash
-wails dev
+wails3 dev
 ```
 In this mode, the frontend runs on Vite, and calls to Go methods are bridged automatically.
 
 ### Production Build
-We provide custom build scripts for each platform to handle advanced signing, naming, and resource injection. **Use these scripts instead of raw `wails build` for production releases.**
+We provide custom build scripts for each platform to handle advanced signing, naming, and resource injection. **Use these scripts instead of raw `wails3 build` for production releases.**
 
 #### macOS
 ```bash
 chmod +x build-macOS.sh
 ./build-macOS.sh
 ```
-*Generates a signed `DKST Translator AI.app` in `build/bin/`.*
+*Generates a signed `DKST Translator AI.app` in `bin/`.*
 
 #### Windows
 ```batch
 build-Windows.bat
 ```
-*Generates `DKST Translator AI.exe` with embedded version info and icon.*
+*Generates `DKST Translator AI.exe` in `bin/` with embedded version info and icon.*
 
 #### Linux
 ```bash

@@ -25,9 +25,12 @@ import {
     SavePDF,
     SaveHostProviderSettings,
     WriteDebugStudioState
-} from "../wailsjs/go/app/App";
-import { llm } from "../wailsjs/go/models";
-import { ClipboardGetText, ClipboardSetText, Environment, EventsOn, EventsOff } from "../wailsjs/runtime/runtime";
+} from "../bindings/dinkisstyle-translator/internal/app/app";
+import * as llm from "../bindings/dinkisstyle-translator/internal/llm/models";
+import { Clipboard, Events, System } from "@wailsio/runtime";
+
+const onWailsEvent = <T,>(name: string, listener: (data: T) => void) =>
+    Events.On(name, event => listener(event.data as T));
 
 type DebugPayload = {
     direction?: string;
@@ -269,7 +272,26 @@ const DEFAULT_WEB_SERVER_SETTINGS: WebServerSettings = {
     hasPassword: false,
     url: "",
 };
-const isBrowserMode = typeof window !== "undefined" && !(window as any)?.go?.app?.App;
+const isDevelopmentBuild = import.meta.env.DEV;
+
+function isWailsDesktopEnvironment(): boolean {
+    if (typeof window === "undefined") {
+        return false;
+    }
+
+    // Wails v3 no longer exposes the v2 `window.go` bindings object. The
+    // desktop runtime injects `window.wails`; packaged windows also use one of
+    // the Wails asset-server origins below. In dev mode the page is served by
+    // Vite and can render before the native bridge is injected, so DEV is the
+    // reliable signal for that startup window.
+    const location = window.location;
+    return isDevelopmentBuild
+        || typeof (window as any).wails !== "undefined"
+        || location.protocol === "wails:"
+        || location.hostname === "wails.localhost";
+}
+
+const isBrowserMode = !isWailsDesktopEnvironment();
 
 // 프리셋 지침
 const INSTRUCTION_PRESETS = [
@@ -1817,7 +1839,7 @@ function App() {
                 announceAction("Pasted clipboard text into the source editor.");
                 return;
             }
-            const content = await ClipboardGetText();
+            const content = await Clipboard.Text();
             if (!content) {
                 announceAction("Clipboard is empty.");
                 return;
@@ -1964,7 +1986,7 @@ function App() {
                 if (!active) {
                     return;
                 }
-                setWindowMode(mode === "debug-studio" ? "debug-studio" : "main");
+                setWindowMode(isDevelopmentBuild && mode === "debug-studio" ? "debug-studio" : "main");
             })
             .catch(() => {
                 if (!active) {
@@ -2012,12 +2034,12 @@ function App() {
             return;
         }
         let active = true;
-        Environment()
+        System.Environment()
             .then((info) => {
                 if (!active) {
                     return;
                 }
-                setDesktopPlatform(info.platform || "");
+                setDesktopPlatform(info.OS || "");
             })
             .catch((err: any) => {
                 console.error("Could not read environment info:", err);
@@ -2172,13 +2194,13 @@ function App() {
         }
 
         // Listen for translation tokens
-        EventsOn("translation:token", (token: string) => {
+        onWailsEvent("translation:token", (token: string) => {
             clearChunkTimers();
             setTranslation(prev => prev + token);
             smoothScrollTranslationToBottom();
         });
 
-        EventsOn("translation:chunk", (payload: TranslationChunkPayload) => {
+        onWailsEvent("translation:chunk", (payload: TranslationChunkPayload) => {
             const chunkIndex = typeof payload.chunk_index === "number" ? payload.chunk_index : 0;
             const nextText = payload.text || "";
             const current = renderedChunksRef.current[chunkIndex] || {
@@ -2208,7 +2230,7 @@ function App() {
             smoothScrollTranslationToBottom();
         });
 
-        EventsOn("translation:pdf-page", (payload: PDFPageReadyPayload) => {
+        onWailsEvent("translation:pdf-page", (payload: PDFPageReadyPayload) => {
             if (!payload?.result?.dataBase64) {
                 return;
             }
@@ -2223,16 +2245,16 @@ function App() {
             );
         });
 
-        EventsOn("translation:pdf-page-error", (payload: { pageNumber?: number; message?: string }) => {
+        onWailsEvent("translation:pdf-page-error", (payload: { pageNumber?: number; message?: string }) => {
             setIsBuildingTranslatedPDF(false);
             setStatusMessage(`Could not save translated page ${payload?.pageNumber || ""}: ${payload?.message || "Unknown error"}`);
         });
 
-        EventsOn("translation:clear", () => {
+        onWailsEvent("translation:clear", () => {
             resetTranslationPresentation();
         });
 
-        EventsOn("translation:complete", (payload: TranslationCompletePayload) => {
+        onWailsEvent("translation:complete", (payload: TranslationCompletePayload) => {
             clearAllDraftSkeletons();
             const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
             setTranslation(payload.text || renderedChunkText || "");
@@ -2267,24 +2289,26 @@ function App() {
             }, 500);
         });
 
-        EventsOn("translation:debug", (payload: DebugPayload) => {
-            if (payload.direction === "note" && payload.endpoint === "prompt:translation") {
-                setLastTranslationPromptPreview(payload.payload || "");
-                return;
-            }
-            if (payload.direction === "note" && payload.endpoint === "prompt:topic-aware-hints") {
-                setLastTopicAwareHintsPreview(payload.payload || "");
-                return;
-            }
-            const section = `${payload.endpoint || ""}\n${payload.payload || ""}`.trim();
-            if (payload.direction === "request") {
-                setDebugRequest(section);
-            } else if (payload.direction === "response" || payload.direction === "note") {
-                setDebugResponse(section);
-            }
-        });
+        if (isDevelopmentBuild) {
+            onWailsEvent("translation:debug", (payload: DebugPayload) => {
+                if (payload.direction === "note" && payload.endpoint === "prompt:translation") {
+                    setLastTranslationPromptPreview(payload.payload || "");
+                    return;
+                }
+                if (payload.direction === "note" && payload.endpoint === "prompt:topic-aware-hints") {
+                    setLastTopicAwareHintsPreview(payload.payload || "");
+                    return;
+                }
+                const section = `${payload.endpoint || ""}\n${payload.payload || ""}`.trim();
+                if (payload.direction === "request") {
+                    setDebugRequest(section);
+                } else if (payload.direction === "response" || payload.direction === "note") {
+                    setDebugResponse(section);
+                }
+            });
+        }
 
-        EventsOn("translation:progress", (payload: ProgressPayload) => {
+        onWailsEvent("translation:progress", (payload: ProgressPayload) => {
             if (progressHideTimerRef.current !== null) {
                 window.clearTimeout(progressHideTimerRef.current);
                 progressHideTimerRef.current = null;
@@ -2292,16 +2316,16 @@ function App() {
             applyProgressPayload(payload, progressStateRef.current.visible);
         });
 
-        EventsOn("translation:stats", (payload: TranslationStatsPayload) => {
+        onWailsEvent("translation:stats", (payload: TranslationStatsPayload) => {
             latestStatsRef.current = payload;
         });
 
         // Listen for menu events
-        EventsOn("menu:open-file", () => openFileActionRef.current());
-        EventsOn("menu:translate", () => translateActionRef.current());
-        EventsOn("menu:font-increase", () => setEditorFontSize(prev => clampFontSize(prev + 1)));
-        EventsOn("menu:font-decrease", () => setEditorFontSize(prev => clampFontSize(prev - 1)));
-        EventsOn("menu:font-reset", () => setEditorFontSize(DEFAULT_EDITOR_FONT_SIZE));
+        onWailsEvent("menu:open-file", () => openFileActionRef.current());
+        onWailsEvent("menu:translate", () => translateActionRef.current());
+        onWailsEvent("menu:font-increase", () => setEditorFontSize(prev => clampFontSize(prev + 1)));
+        onWailsEvent("menu:font-decrease", () => setEditorFontSize(prev => clampFontSize(prev - 1)));
+        onWailsEvent("menu:font-reset", () => setEditorFontSize(DEFAULT_EDITOR_FONT_SIZE));
 
         const handleKeyDown = (event: KeyboardEvent) => {
             if (!event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -2387,20 +2411,22 @@ function App() {
                 window.clearTimeout(reviewOverlayTimerRef.current);
             }
             window.removeEventListener("keydown", handleKeyDown);
-            EventsOff("translation:token");
-            EventsOff("translation:chunk");
-            EventsOff("translation:pdf-page");
-            EventsOff("translation:pdf-page-error");
-            EventsOff("translation:clear");
-            EventsOff("translation:complete");
-            EventsOff("translation:debug");
-            EventsOff("translation:progress");
-            EventsOff("translation:stats");
-            EventsOff("menu:open-file");
-            EventsOff("menu:translate");
-            EventsOff("menu:font-increase");
-            EventsOff("menu:font-decrease");
-            EventsOff("menu:font-reset");
+            Events.Off(
+                "translation:token",
+                "translation:chunk",
+                "translation:pdf-page",
+                "translation:pdf-page-error",
+                "translation:clear",
+                "translation:complete",
+                "translation:debug",
+                "translation:progress",
+                "translation:stats",
+                "menu:open-file",
+                "menu:translate",
+                "menu:font-increase",
+                "menu:font-decrease",
+                "menu:font-reset",
+            );
             clearChunkTimers();
         };
     }, [isDebugStudioWindow]);
@@ -2438,7 +2464,7 @@ function App() {
     }, [translationCompletionID, completedPDFPages, translatedPDF]);
 
     useEffect(() => {
-        if (isBrowserMode) {
+        if (!isDevelopmentBuild || isBrowserMode) {
             return;
         }
         const applySnapshot = (snapshot: DebugStudioSnapshot | null) => {
@@ -2477,7 +2503,7 @@ function App() {
     }, []);
 
     useEffect(() => {
-        if (isBrowserMode) {
+        if (!isDevelopmentBuild || isBrowserMode) {
             return;
         }
         const snapshot: DebugStudioSnapshot = {
@@ -2689,7 +2715,7 @@ function App() {
             const payload = llm.TranslationRequest.createFrom({
                 settings: llm.ProviderSettings.createFrom({
                     ...effectiveSettings,
-                    debugTranslationPromptTemplate: debugTranslationPromptTemplate.trim(),
+                    debugTranslationPromptTemplate: isDevelopmentBuild ? debugTranslationPromptTemplate.trim() : "",
                 }),
                 sourceText,
                 sourceLang,
@@ -3091,7 +3117,7 @@ function App() {
                 announceAction("Pasted clipboard text into the source editor.");
                 return;
             }
-            const content = await ClipboardGetText();
+            const content = await Clipboard.Text();
             if (!content) {
                 announceAction("Clipboard is empty.");
                 return;
@@ -3218,12 +3244,8 @@ function App() {
                 return;
             }
 
-            const ok = await ClipboardSetText(readableTranslation);
-            if (ok) {
-                announceAction("Copied translation to clipboard.");
-            } else {
-                announceAction("Could not copy translation to clipboard.");
-            }
+            await Clipboard.SetText(readableTranslation);
+            announceAction("Copied translation to clipboard.");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not copy translation: ${String(err)}`);
@@ -3252,12 +3274,8 @@ function App() {
                 return;
             }
 
-            const ok = await ClipboardSetText(combinedReviewNotes);
-            if (ok) {
-                announceAction("Copied review notes to clipboard.");
-            } else {
-                announceAction("Could not copy review notes to clipboard.");
-            }
+            await Clipboard.SetText(combinedReviewNotes);
+            announceAction("Copied review notes to clipboard.");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not copy review notes: ${String(err)}`);
@@ -3275,8 +3293,8 @@ function App() {
     };
 
     const handleOpenDebugStudioWindow = () => {
-        if (isBrowserMode) {
-            setStatusMessage("Debug Studio is only available in the desktop app.");
+        if (!isDevelopmentBuild || isBrowserMode) {
+            setStatusMessage("Debug Studio is only available in desktop development builds.");
             return;
         }
         void OpenDebugStudioWindow().catch((err: any) => {
@@ -3474,7 +3492,7 @@ function App() {
         return <div className="debug-window-shell">Loading window...</div>;
     }
 
-    if (isDebugStudioWindow) {
+    if (isDevelopmentBuild && isDebugStudioWindow) {
         return (
             <DebugStudioWindow
                 showDebugPanel={showDebugPanel}
@@ -3555,28 +3573,30 @@ function App() {
 
                 <div className="status-bar">
                     <span className="status-message">{statusMessage}</span>
-                    <div className={`status-summary-shell ${showStatusSummary ? "is-open" : "is-closed"}`}>
-                        <button
-                            className="status-summary-toggle"
-                            onClick={() => setShowStatusSummary(prev => !prev)}
-                            title={showStatusSummary ? "Hide Summary" : "Show Summary"}
-                        >
-                            <span className={`material-symbols-outlined status-summary-icon ${showStatusSummary ? "is-open" : ""}`}>expand_circle_right</span>
-                        </button>
-                        <div className={`status-summary ${showStatusSummary ? "is-open" : ""}`}>
-                            <span className="status-summary-text">
-                                Source: {sourceLang} | Target: {targetLang} | Reasoning: {providerSettings.reasoning || "auto"} | Temperature: {temperatureLabel} | Fast: {fastTranslationEnabled ? "on" : "off"} | Proofread: {effectivePostEditEnabled ? "on" : "off"} | Smart Chunking: {providerSettings.enableSmartChunking ? `on ${providerSettings.smartChunkSize}` : "off"} | Prompt: {instruction ? "set" : "empty"} |
-                            </span>
-                            {!isBrowserMode && <div className="status-summary-actions">
-                                <button className={`debug-toggle ${showDebugPanel ? "is-on" : "is-off"}`} onClick={() => setShowDebugPanel((prev: boolean) => !prev)}>
-                                    Debug: {showDebugPanel ? "on" : "off"}
-                                </button>
-                                <button className="debug-open-btn" onClick={handleOpenDebugStudioWindow}>
-                                    Open Debug Studio
-                                </button>
-                            </div>}
+                    {isDevelopmentBuild && (
+                        <div className={`status-summary-shell ${showStatusSummary ? "is-open" : "is-closed"}`}>
+                            <button
+                                className="status-summary-toggle"
+                                onClick={() => setShowStatusSummary(prev => !prev)}
+                                title={showStatusSummary ? "Hide Summary" : "Show Summary"}
+                            >
+                                <span className={`material-symbols-outlined status-summary-icon ${showStatusSummary ? "is-open" : ""}`}>expand_circle_right</span>
+                            </button>
+                            <div className={`status-summary ${showStatusSummary ? "is-open" : ""}`}>
+                                <span className="status-summary-text">
+                                    Source: {sourceLang} | Target: {targetLang} | Reasoning: {providerSettings.reasoning || "auto"} | Temperature: {temperatureLabel} | Fast: {fastTranslationEnabled ? "on" : "off"} | Proofread: {effectivePostEditEnabled ? "on" : "off"} | Smart Chunking: {providerSettings.enableSmartChunking ? `on ${providerSettings.smartChunkSize}` : "off"} | Prompt: {instruction ? "set" : "empty"} |
+                                </span>
+                                {!isBrowserMode && <div className="status-summary-actions">
+                                    <button className={`debug-toggle ${showDebugPanel ? "is-on" : "is-off"}`} onClick={() => setShowDebugPanel((prev: boolean) => !prev)}>
+                                        Debug: {showDebugPanel ? "on" : "off"}
+                                    </button>
+                                    <button className="debug-open-btn" onClick={handleOpenDebugStudioWindow}>
+                                        Open Debug Studio
+                                    </button>
+                                </div>}
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
 
                 <section className="prompt-hero" style={{ ["--editor-font-size" as string]: `${editorFontSize}px` }}>
@@ -4225,7 +4245,7 @@ function App() {
 
                 {showModelModal && (
                     <div className="modal-overlay modal-overlay-centered" onClick={() => setShowModelModal(false)}>
-                        <div className={`modal-card ${isBrowserMode ? "" : "modal-card-settings"}`} onClick={e => e.stopPropagation()}>
+                        <div className={`modal-card settings-modal-card ${isBrowserMode ? "" : "modal-card-settings"}`} onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <div>
                                     <div className="modal-title">LLM Settings</div>
@@ -4242,7 +4262,7 @@ function App() {
                                     OK
                                 </button>
                             </div>
-                            <div className="modal-body">
+                            <div className="modal-body settings-modal-body">
                                 {isBrowserMode ? (
                                     <div className="settings-grid">
                                         <div className="settings-field">
@@ -4263,7 +4283,7 @@ function App() {
                                                 </button>
                                             </div>
                                         </div>
-                                        <label className="settings-field">
+                                        <div className="settings-field">
                                             <span>Smart Chunking</span>
                                             <label className="settings-checkbox">
                                                 <input
@@ -4274,11 +4294,11 @@ function App() {
                                                         enableSmartChunking: e.target.checked,
                                                     }))}
                                                 />
-                                                <span>Enable smart chunking</span>
+                                                <span>Enabled</span>
                                             </label>
-                                        </label>
+                                        </div>
                                         <label className="settings-field">
-                                            <span>Smart Chunk Size</span>
+                                            <span>Chunk Size</span>
                                             <input
                                                 type="text"
                                                 inputMode="numeric"
@@ -4393,7 +4413,7 @@ function App() {
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <label className="settings-field">
+                                                <div className="settings-field">
                                                     <span>Smart Chunking</span>
                                                     <label className="settings-checkbox">
                                                         <input
@@ -4404,11 +4424,11 @@ function App() {
                                                                 enableSmartChunking: e.target.checked,
                                                             }))}
                                                         />
-                                                        <span>Enable smart chunking</span>
+                                                        <span>Enabled</span>
                                                     </label>
-                                                </label>
+                                                </div>
                                                 <label className="settings-field">
-                                                    <span>Smart Chunk Size</span>
+                                                    <span>Chunk Size</span>
                                                     <input
                                                         type="text"
                                                         inputMode="numeric"
@@ -4484,11 +4504,11 @@ function App() {
                                                             onChange={e => setWebServerSettings(prev => ({ ...prev, enabled: e.target.checked }))}
                                                             disabled={isBrowserMode}
                                                         />
-                                                        <span>Enable web server access</span>
+                                                        <span>Enabled</span>
                                                     </label>
                                                 </div>
                                                 <label className="settings-field">
-                                                    <span>Web Server Port</span>
+                                                    <span>Port</span>
                                                     <input
                                                         type="text"
                                                         inputMode="numeric"
@@ -4503,7 +4523,7 @@ function App() {
                                                     />
                                                 </label>
                                                 <div className="settings-field">
-                                                    <span>Web Server Password</span>
+                                                    <span>Password</span>
                                                     <div className="settings-inline-action">
                                                         <input
                                                             type="password"
@@ -4532,11 +4552,11 @@ function App() {
                                                             onChange={e => setWebServerSettings(prev => ({ ...prev, useTls: e.target.checked }))}
                                                             disabled={isBrowserMode}
                                                         />
-                                                        <span>Use certificate files from DKST Translator AI/certs</span>
+                                                        <span>Use certificates from the app folder</span>
                                                     </label>
                                                 </div>
                                                 <label className="settings-field">
-                                                    <span>Certificate Domain</span>
+                                                    <span>Domain</span>
                                                     <input
                                                         type="text"
                                                         value={webServerSettings.certDomain}
@@ -4545,7 +4565,7 @@ function App() {
                                                         placeholder="localhost"
                                                     />
                                                 </label>
-                                                <div className="settings-field">
+                                                <div className="settings-field settings-field-details">
                                                     <span>Certificate Folder</span>
                                                     <div className="settings-note">{webServerSettings.certificateDirectory || "Loaded when the desktop app starts."}</div>
                                                     <div className="toolbar-group model-group">
@@ -4556,12 +4576,15 @@ function App() {
                                                             {isSavingWebServerSettings ? "Saving..." : "Apply Web Server"}
                                                         </button>
                                                     </div>
-                                                    <div className="settings-note">
-                                                        Copy certificate files into <code>DKST Translator AI/certs</code>. Default names: <code>cert.pem</code> and <code>key.pem</code>. Domain-specific names like <code>{'{domain}.crt'}</code> + <code>{'{domain}.key'}</code> are also supported.
-                                                    </div>
-                                                    <div className="settings-note">
-                                                        Browser trust warnings can still appear unless the certificate is trusted by the operating system and matches the host you use to connect.
-                                                    </div>
+                                                    <details className="settings-help">
+                                                        <summary>Certificate setup help</summary>
+                                                        <div>
+                                                            Copy certificate files into <code>DKST Translator AI/certs</code>. Default names: <code>cert.pem</code> and <code>key.pem</code>. Domain-specific names like <code>{'{domain}.crt'}</code> + <code>{'{domain}.key'}</code> are also supported.
+                                                        </div>
+                                                        <div>
+                                                            Browser trust warnings can still appear unless the certificate is trusted by the operating system and matches the host you use to connect.
+                                                        </div>
+                                                    </details>
                                                     {webServerStatus && (
                                                         <div className={`settings-status ${webServerStatus.toLowerCase().includes("could not") ? "is-error" : "is-ok"}`}>
                                                             {webServerStatus}

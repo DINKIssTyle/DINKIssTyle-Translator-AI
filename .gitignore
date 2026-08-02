@@ -12,6 +12,8 @@ coverage.txt
 
 # Build Output & Executables
 build/bin/
+bin/
+.task/
 *.exe
 *.exe~
 *.dll

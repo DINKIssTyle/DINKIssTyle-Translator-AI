@@ -1868,10 +1868,17 @@ textarea {
 }
 
 .modal-card-settings {
-  width: min(980px, calc(100vw - 32px));
-  max-height: calc(100vh - 120px);
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.modal-card-settings > .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .modal-card-debug-studio {
@@ -2059,57 +2066,111 @@ textarea {
 
 .settings-grid {
   display: grid;
-  gap: 14px;
+  gap: 8px;
   grid-template-columns: 1fr;
 }
 
 .settings-columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
+  gap: 12px;
   align-items: start;
 }
 
 .settings-panel {
   min-width: 0;
-  padding: 16px;
+  padding: 13px;
   border: 1px solid rgba(214, 219, 228, 0.95);
-  border-radius: 18px;
-  background: #f8f9fc;
+  border-radius: 14px;
+  background: rgba(248, 249, 252, 0.78);
 }
 
 .settings-panel-header {
-  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(214, 219, 228, 0.72);
 }
 
 .settings-panel-title {
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   font-weight: 900;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.055em;
   text-transform: uppercase;
   color: var(--text-main);
 }
 
 .settings-panel-subtitle {
-  margin-top: 4px;
+  margin-top: 0;
   color: var(--text-soft);
-  font-size: 0.84rem;
-  line-height: 1.4;
+  font-size: 0.73rem;
+  line-height: 1.3;
 }
 
 .settings-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: var(--settings-label-width, 126px) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 7px;
   min-width: 0;
+  min-height: 34px;
+}
+
+.settings-field > :not(:first-child) {
+  grid-column: 2;
 }
 
 .settings-field > input,
 .settings-field > select,
 .settings-field > .toolbar-group,
 .settings-field > .settings-inline-action,
-.settings-field > .settings-note {
+.settings-field > .settings-note,
+.settings-field > .settings-help,
+.settings-field > .settings-status {
   width: 100%;
+}
+
+.settings-modal-card {
+  --settings-label-width: 126px;
+}
+
+.settings-modal-card .modal-header {
+  padding: 16px 18px 12px;
+}
+
+.settings-modal-body {
+  padding: 14px;
+}
+
+.settings-modal-card select,
+.settings-modal-card input[type="text"],
+.settings-modal-card input[type="password"] {
+  min-height: 34px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.settings-modal-card .model-group select {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.settings-modal-card .model-group .icon-btn,
+.settings-modal-card .settings-inline-action .btn-small {
+  min-height: 34px;
+  height: 34px;
+}
+
+.settings-modal-card .settings-grid > .settings-checkbox {
+  min-height: 30px;
+  padding-left: calc(var(--settings-label-width) + 12px);
+}
+
+.settings-modal-card .settings-grid > .settings-status {
+  margin-top: 2px;
 }
 
 .settings-inline-action {
@@ -2117,7 +2178,7 @@ textarea {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .settings-inline-action input {
@@ -2125,21 +2186,21 @@ textarea {
   min-width: 0;
 }
 
-.settings-field span {
+.settings-field > span:first-child {
   color: var(--text-soft);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  /* text-transform: uppercase; */
-  /* letter-spacing: 0.05em; */
+  line-height: 1.25;
 }
 
 .settings-checkbox {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--text-main);
-  font-size: 0.92rem;
+  font-size: 0.8rem;
   font-weight: 700;
+  line-height: 1.3;
 }
 
 .settings-checkbox input {
@@ -2148,10 +2209,48 @@ textarea {
 }
 
 .settings-status {
-  padding: 12px 14px;
-  border-radius: 12px;
-  font-size: 0.9rem;
-  line-height: 1.45;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.settings-field-details {
+  align-items: start;
+}
+
+.settings-field-details > span:first-child {
+  padding-top: 7px;
+}
+
+.settings-help {
+  overflow: hidden;
+  border: 1px solid rgba(214, 219, 228, 0.86);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.settings-help summary {
+  padding: 7px 9px;
+  color: var(--text-soft);
+  font-weight: 750;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-help[open] summary {
+  border-bottom: 1px solid rgba(214, 219, 228, 0.72);
+}
+
+.settings-help > div {
+  padding: 8px 10px 0;
+}
+
+.settings-help > div:last-child {
+  padding-bottom: 9px;
 }
 
 .settings-status.is-ok {
@@ -2356,12 +2455,12 @@ textarea {
 }
 
 .settings-note {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 7px 9px;
+  border-radius: 9px;
   background: rgba(47, 124, 246, 0.08);
   color: var(--text-soft);
-  font-size: 0.7rem;
-  line-height: 1.35;
+  font-size: 0.66rem;
+  line-height: 1.3;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -2369,11 +2468,7 @@ textarea {
 
 @media (max-width: 900px) {
   .modal-card-settings {
-    width: min(680px, calc(100vw - 24px));
-  }
-
-  .settings-columns {
-    grid-template-columns: 1fr;
+    width: min(860px, calc(100vw - 24px));
   }
 
   .enhanced-context-layout {
@@ -2398,7 +2493,29 @@ textarea {
   }
 }
 
+@media (max-width: 780px) {
+  .settings-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
+  .settings-modal-card {
+    --settings-label-width: 104px;
+  }
+
+  .settings-modal-body {
+    padding: 10px;
+  }
+
+  .settings-panel {
+    padding: 11px;
+  }
+
+  .settings-inline-action {
+    flex-wrap: wrap;
+  }
+
   .modal-header {
     padding: 16px 16px 12px;
     align-items: flex-start;

@@ -4,18 +4,16 @@
 package app
 
 import (
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func GetMenu(app *App) *menu.Menu {
-	AppMenu := menu.NewMenu()
+func GetMenu(app *application.App) *application.Menu {
+	appMenu := app.NewMenu()
 
-	fileMenu := AppMenu.AddSubmenu("File")
-	fileMenu.AddText("Open File...", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:open-file")
+	fileMenu := appMenu.AddSubmenu("File")
+	fileMenu.Add("Open File...").SetAccelerator("CmdOrCtrl+o").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:open-file")
 	})
 
-	return AppMenu
+	return appMenu
 }

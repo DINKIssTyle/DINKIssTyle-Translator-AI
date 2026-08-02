@@ -5,47 +5,43 @@ set -e
 
 # Configuration
 PRODUCT_NAME="DKST Translator AI"
-BUILD_DIR="build/bin"
+APP_NAME="dkst-translator-ai"
+BUILD_DIR="bin"
+GENERATED_APP="$BUILD_DIR/$APP_NAME.app"
 APP_BUNDLE="$BUILD_DIR/$PRODUCT_NAME.app"
-ENTITLEMENTS="build/darwin/entitlements.plist"
+ENTITLEMENTS="build/darwin/dkst.entitlements.plist"
 
 echo "=== Starting macOS Build Process ==="
 
 # 1. Environment Cleanup and Tool Verification
 echo "[1/5] Cleaning up environment and checking tools..."
 rm -rf "$APP_BUNDLE"
-rm -f "$BUILD_DIR/$PRODUCT_NAME"
+rm -rf "$GENERATED_APP"
+rm -f "$BUILD_DIR/$APP_NAME"
 mkdir -p "$BUILD_DIR"
 
-if ! command -v wails &> /dev/null; then
-    echo "Wails CLI not found. Installing..."
-    go install github.com/wailsapp/wails/v2/cmd/wails@latest
+if ! command -v wails3 &> /dev/null || [ "$(wails3 version 2>/dev/null)" != "v3.0.0-beta.1" ]; then
+    echo "Installing Wails v3.0.0-beta.1 CLI..."
+    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.1
     export PATH=$PATH:$(go env GOPATH)/bin
 fi
 
-# 2. Frontend Build (Explicit build for absolute consistency)
-echo "[2/5] Building frontend assets (explicitly)..."
-pushd frontend
-npm install
-npm run build
-popd
+# 2. Build and package with Wails v3 (universal binary)
+echo "[2/5] Building application with Wails v3..."
+wails3 task darwin:package:universal
+mv "$GENERATED_APP" "$APP_BUNDLE"
 
-# 3. Build with Wails (using universal binary for modern Macs)
-echo "[3/5] Building application with Wails..."
-wails build -platform darwin/universal -ldflags "-s -w" -v 2 -o "$PRODUCT_NAME"
-
-# 4. Verify Bundle and Binary Names
-echo "[4/5] Verifying application name..."
+# 3. Verify Bundle and Product Name
+echo "[3/4] Verifying application name..."
 if [ -d "$APP_BUNDLE" ]; then
-    plutil -replace CFBundleExecutable -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
     plutil -replace CFBundleName -string "$PRODUCT_NAME" "$APP_BUNDLE/Contents/Info.plist"
 else
     echo "Error: Application bundle not found at $APP_BUNDLE"
     exit 1
 fi
 
-# 5. Code Signing Integrity (Re-signing)
-echo "[5/5] Detecting signing identity and performing code signing..."
+# 4. Code Signing Integrity (Re-signing)
+echo "[4/4] Detecting signing identity and performing code signing..."
 if [ -n "$MACOS_SIGN_IDENTITY" ]; then
     SIGN_ID="$MACOS_SIGN_IDENTITY"
     echo "Using SIGN_ID from environment: $SIGN_ID"
@@ -65,7 +61,7 @@ fi
 
 # Deep code signing
 xattr -cr "$APP_BUNDLE"
-codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
+codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 codesign --force --options runtime --deep --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
 
 echo "=== Build Complete: $APP_BUNDLE ==="

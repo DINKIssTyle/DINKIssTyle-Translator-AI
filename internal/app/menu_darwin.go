@@ -4,48 +4,46 @@
 package app
 
 import (
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func GetMenu(app *App) *menu.Menu {
-	AppMenu := menu.NewMenu()
+func GetMenu(app *application.App) *application.Menu {
+	appMenu := app.NewMenu()
 
 	// macOS Native App Menu
-	AppMenu.Append(menu.AppMenu())
+	appMenu.AddRole(application.AppMenu)
 
 	// File Menu
-	fileMenu := AppMenu.AddSubmenu("File")
-	fileMenu.AddText("Open File…", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:open-file")
+	fileMenu := appMenu.AddSubmenu("File")
+	fileMenu.Add("Open File…").SetAccelerator("CmdOrCtrl+o").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:open-file")
 	})
 	fileMenu.AddSeparator()
-	fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		runtime.Quit(app.ctx)
+	fileMenu.Add("Quit").SetAccelerator("CmdOrCtrl+q").OnClick(func(_ *application.Context) {
+		app.Quit()
 	})
 
 	// Edit Menu (Essential for Clipboard on macOS)
-	AppMenu.Append(menu.EditMenu())
+	appMenu.AddRole(application.EditMenu)
 
-	viewMenu := AppMenu.AddSubmenu("View")
-	viewMenu.AddText("Decrease Font Size", keys.CmdOrCtrl("-"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:font-decrease")
+	viewMenu := appMenu.AddSubmenu("View")
+	viewMenu.Add("Decrease Font Size").SetAccelerator("CmdOrCtrl+-").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:font-decrease")
 	})
-	viewMenu.AddText("Increase Font Size", keys.CmdOrCtrl("="), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:font-increase")
+	viewMenu.Add("Increase Font Size").SetAccelerator("CmdOrCtrl+=").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:font-increase")
 	})
-	viewMenu.AddText("Actual Size", keys.CmdOrCtrl("0"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:font-reset")
+	viewMenu.Add("Actual Size").SetAccelerator("CmdOrCtrl+0").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:font-reset")
 	})
 
-	translateMenu := AppMenu.AddSubmenu("Translate")
-	translateMenu.AddText("Translate", keys.CmdOrCtrl("t"), func(_ *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "menu:translate")
+	translateMenu := appMenu.AddSubmenu("Translate")
+	translateMenu.Add("Translate").SetAccelerator("CmdOrCtrl+t").OnClick(func(_ *application.Context) {
+		app.Event.Emit("menu:translate")
 	})
 
 	// Window Menu
-	AppMenu.Append(menu.WindowMenu())
+	appMenu.AddRole(application.WindowMenu)
 
-	return AppMenu
+	return appMenu
 }

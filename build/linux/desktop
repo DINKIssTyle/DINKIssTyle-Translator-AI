@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=DKST Translator AI
+Comment=Professional AI Local LLM Translation Tool built with Wails.
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/dkst-translator-ai %u
+Terminal=false
+Type=Application
+Icon=dkst-translator-ai
+Categories=Utility;
+StartupWMClass=dkst-translator-ai
+
+ 
