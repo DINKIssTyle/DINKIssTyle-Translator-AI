@@ -118,6 +118,35 @@ func main() {
 `
 		infoPlist = infoPlist[:closingDict] + sceneManifest + infoPlist[closingDict:]
 	}
+
+	// Enforce iPhone portrait only and iPad portrait + landscape
+	if iphoneIdx := strings.Index(infoPlist, "<key>UISupportedInterfaceOrientations</key>"); iphoneIdx >= 0 {
+		endArray := strings.Index(infoPlist[iphoneIdx:], "</array>")
+		if endArray >= 0 {
+			endIdx := iphoneIdx + endArray + len("</array>")
+			iphoneReplacement := `<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>`
+			infoPlist = infoPlist[:iphoneIdx] + iphoneReplacement + infoPlist[endIdx:]
+		}
+	}
+
+	if ipadIdx := strings.Index(infoPlist, "<key>UISupportedInterfaceOrientations~ipad</key>"); ipadIdx >= 0 {
+		endArray := strings.Index(infoPlist[ipadIdx:], "</array>")
+		if endArray >= 0 {
+			endIdx := ipadIdx + endArray + len("</array>")
+			ipadReplacement := `<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>`
+			infoPlist = infoPlist[:ipadIdx] + ipadReplacement + infoPlist[endIdx:]
+		}
+	}
+
 	if err := os.WriteFile(infoPlistPath, []byte(infoPlist), 0o644); err != nil {
 		panic(err)
 	}
