@@ -55,6 +55,10 @@
     <key>CFBundleGetInfoString</key>
     <string>Professional local LLM translation workspace</string>
     
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

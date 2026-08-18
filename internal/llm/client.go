@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"dinkisstyle-translator/internal/translation"
 )
 
 var (
@@ -103,6 +105,7 @@ func (c *Client) CancelTranslation() {
 	if cancel != nil {
 		cancel()
 	}
+	translation.NewService().Cancel("")
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -398,6 +401,24 @@ type draftTranslator struct {
 }
 
 func (t draftTranslator) translate(reqData TranslationRequest, options translationRuntimeOptions) (string, TranslationStatsPayload, error) {
+	if isNativeTranslationMode(reqData.Settings.Mode) {
+		engine := nativeEngineName(reqData.Settings.Mode)
+		svc := translation.NewService()
+		results, err := svc.Translate(translation.Request{
+			Engine:         engine,
+			Texts:          []string{reqData.SourceText},
+			SourceLanguage: reqData.SourceLang,
+			TargetLanguage: reqData.TargetLang,
+		})
+		if err != nil {
+			return "", TranslationStatsPayload{}, err
+		}
+		translated := ""
+		if len(results) > 0 {
+			translated = results[0]
+		}
+		return translated, TranslationStatsPayload{}, nil
+	}
 	if strings.EqualFold(reqData.Settings.Mode, "lmstudio") {
 		return t.client.translateWithLMStudio(t.reqCtx, reqData, options)
 	}
@@ -782,9 +803,92 @@ func newTranslationHarness(c *Client, reqCtx context.Context, reqData Translatio
 	}
 }
 
+func isNativeTranslationMode(mode string) bool {
+	return strings.EqualFold(mode, "apple") ||
+		strings.EqualFold(mode, "apple-translation") ||
+		strings.EqualFold(mode, "google-mlkit") ||
+		strings.EqualFold(mode, "android-mlkit")
+}
+
+func nativeEngineName(mode string) string {
+	if strings.EqualFold(mode, "apple") || strings.EqualFold(mode, "apple-translation") {
+		return "apple-translation"
+	}
+	if strings.EqualFold(mode, "google-mlkit") {
+		return "google-mlkit"
+	}
+	if strings.EqualFold(mode, "android-mlkit") {
+		return "android-mlkit"
+	}
+	return mode
+}
+
+func (h *translationHarness) runNative() (string, TranslationStatsPayload, error) {
+	if h.mode.emitLifecycle {
+		h.client.emitProgress(
+			"native_translation",
+			"Translating with native engine",
+			"Translating text directly without post-editing or extra context passes",
+			nil,
+			true,
+		)
+	}
+	engine := nativeEngineName(h.reqData.Settings.Mode)
+	svc := translation.NewService()
+	texts := []string{h.reqData.SourceText}
+
+	startTime := time.Now()
+	results, err := svc.Translate(translation.Request{
+		Engine:         engine,
+		Texts:          texts,
+		SourceLanguage: h.reqData.SourceLang,
+		TargetLanguage: h.reqData.TargetLang,
+	})
+	if err != nil {
+		return "", TranslationStatsPayload{}, err
+	}
+	if h.reqCtx.Err() != nil {
+		return "", TranslationStatsPayload{}, h.reqCtx.Err()
+	}
+	translated := ""
+	if len(results) > 0 {
+		translated = results[0]
+	}
+	elapsed := time.Since(startTime).Seconds()
+
+	chunkPayload := TranslationChunkPayload{
+		ChunkIndex:  0,
+		Phase:       "final",
+		Text:        translated,
+		FinalClosed: true,
+	}
+	if h.mode.emitLifecycle {
+		h.client.emitChunk(chunkPayload)
+		h.client.emitProgress(
+			"completed",
+			"Translation completed",
+			"Translation finished successfully",
+			nil,
+			false,
+		)
+	}
+	stats := TranslationStatsPayload{
+		TimeToFirstTokenSeconds: elapsed,
+		TotalOutputTokens:       len(strings.Fields(translated)),
+	}
+	if h.mode.emitLifecycle {
+		h.client.emitStatsPayload(stats)
+	}
+	return translated, stats, nil
+}
+
 func (h *translationHarness) run() (string, TranslationStatsPayload, error) {
 	if h.mode.emitLifecycle && h.mode.clearAtStart {
 		h.client.emitClear()
+	}
+
+	if isNativeTranslationMode(h.reqData.Settings.Mode) {
+		return h.runNative()
 	}
 
 	if len(h.plan.chunks) <= 1 {
@@ -3280,6 +3384,14 @@ func (c *Client) emitStats(raw map[string]any) {
 		return
 	}
 	sink.Stats(statsFromMap(raw))
+}
+
+func (c *Client) emitStatsPayload(payload TranslationStatsPayload) {
+	sink := c.currentSink()
+	if sink == nil {
+		return
+	}
+	sink.Stats(payload)
 }
 
 func statsFromMap(raw map[string]any) TranslationStatsPayload {

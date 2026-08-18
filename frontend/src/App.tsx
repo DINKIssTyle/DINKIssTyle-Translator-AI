@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import brandLogo from './assets/images/dskt-logo.png';
 import PDFPreview from './PDFPreview';
 import {
     CancelTranslation,
@@ -93,7 +92,7 @@ type TranslationStatsPayload = {
 
 export type ThemeMode = "auto" | "light" | "dark";
 
-type ProviderMode = "lmstudio" | "openai" | "litertlm";
+type ProviderMode = "lmstudio" | "openai" | "litertlm" | "apple" | "google-mlkit";
 
 type ProviderProfile = {
     endpoint: string;
@@ -292,6 +291,20 @@ const DEFAULT_PROVIDER_PROFILES: Record<ProviderMode, ProviderProfile> = {
         liteRTRuntimeMode: "ondevice",
         liteRTModelPath: "",
         liteRTRuntimePath: "",
+    },
+    apple: {
+        endpoint: "",
+        apiKey: "",
+        model: "Apple Translation",
+        reasoning: "",
+        temperature: DEFAULT_TEMPERATURE,
+    },
+    "google-mlkit": {
+        endpoint: "",
+        apiKey: "",
+        model: "Google Translation (ML Kit)",
+        reasoning: "",
+        temperature: DEFAULT_TEMPERATURE,
     },
 };
 const GLOSSARY_STOPWORDS = new Set([
@@ -1332,13 +1345,28 @@ function App() {
                     liteRTPort: Number(storedSettings?.liteRTPort) || 9379,
                 } : {}),
             },
+            apple: {
+                ...DEFAULT_PROVIDER_PROFILES.apple,
+                ...(raw?.apple || {}),
+                ...(initialMode === "apple" ? {
+                    model: storedSettings?.selectedModel || DEFAULT_PROVIDER_PROFILES.apple.model,
+                } : {}),
+            },
+            "google-mlkit": {
+                ...DEFAULT_PROVIDER_PROFILES["google-mlkit"],
+                ...(raw?.["google-mlkit"] || {}),
+                ...(initialMode === "google-mlkit" ? {
+                    model: storedSettings?.selectedModel || DEFAULT_PROVIDER_PROFILES["google-mlkit"].model,
+                } : {}),
+            },
         };
     });
     const [fastTranslationEnabled, setFastTranslationEnabled] = useState<boolean>(Boolean(storedSettings?.fastTranslationEnabled));
     const [sourceLang, setSourceLang] = useState(storedSettings?.sourceLang || "auto");
     const [targetLang, setTargetLang] = useState(storedSettings?.targetLang || "Korean");
     const [instruction, setInstruction] = useState(storedSettings?.instruction ?? "");
-    const [statusMessage, setStatusMessage] = useState("Loading models...");
+    const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const toastTimerRef = useRef<number | null>(null);
     const [debugRequest, setDebugRequest] = useState("");
     const [debugResponse, setDebugResponse] = useState("");
     const [showDebugPanel, setShowDebugPanel] = useState(storedSettings?.showDebugPanel ?? true);
@@ -1355,8 +1383,6 @@ function App() {
     const [webServerPasswordDraft, setWebServerPasswordDraft] = useState("");
     const [webServerStatus, setWebServerStatus] = useState("");
     const [isSavingWebServerSettings, setIsSavingWebServerSettings] = useState(false);
-    const [showSavedToast, setShowSavedToast] = useState(false);
-    const [savedToastMessage, setSavedToastMessage] = useState("Settings saved");
     const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
         const storedTheme = storedSettings?.theme;
         if (storedTheme === "light" || storedTheme === "dark" || storedTheme === "auto") {
@@ -1402,7 +1428,14 @@ function App() {
     const [showStatusSummary, setShowStatusSummary] = useState(false);
     const [suppressPromptTooltips, setSuppressPromptTooltips] = useState(false);
     const [desktopPlatform, setDesktopPlatform] = useState("");
-    const isMobilePlatform = desktopPlatform === "android" || desktopPlatform === "ios";
+    const userAgent = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+    const isDarwinDesktop = desktopPlatform === "darwin" || (!desktopPlatform && /Macintosh|Mac OS X/i.test(userAgent) && !(typeof navigator !== "undefined" && navigator.maxTouchPoints > 1));
+    const isAppleMobile = desktopPlatform === "ios" || /iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1);
+    const isAndroidDevice = desktopPlatform === "android" || /Android/i.test(userAgent);
+    const isApplePlatform = isDarwinDesktop || isAppleMobile;
+    const isMLKitPlatform = isAndroidDevice || isAppleMobile;
+    const isMobilePlatform = desktopPlatform === "android" || desktopPlatform === "ios" || isAppleMobile || isAndroidDevice;
+    const isNativeMode = providerSettings.mode === "apple" || providerSettings.mode === "google-mlkit";
     const [isCompactPromptLayout, setIsCompactPromptLayout] = useState(false);
     const [isPromptOptionsExpanded, setIsPromptOptionsExpanded] = useState(false);
     const [promptSelectionModal, setPromptSelectionModal] = useState<PromptSelectionModalState>(null);
@@ -1479,14 +1512,14 @@ function App() {
     const modelPopoverRef = useRef<HTMLDivElement>(null);
     const debugSnapshotRef = useRef("");
     const selectedModel = providerSettings.model;
-    const effectivePostEditEnabled = !fastTranslationEnabled && providerSettings.enablePostEdit;
-    const effectiveEnhancedContextEnabled = !fastTranslationEnabled && providerSettings.enableEnhancedContextTranslation;
-    const effectiveTopicAwarePostEditEnabled = !fastTranslationEnabled && providerSettings.enableTopicAwarePostEdit;
+    const effectivePostEditEnabled = !isNativeMode && !fastTranslationEnabled && providerSettings.enablePostEdit;
+    const effectiveEnhancedContextEnabled = !isNativeMode && !fastTranslationEnabled && providerSettings.enableEnhancedContextTranslation;
+    const effectiveTopicAwarePostEditEnabled = !isNativeMode && !fastTranslationEnabled && providerSettings.enableTopicAwarePostEdit;
     const selectedModelInfo = models.find(model => model.id === selectedModel) || null;
     const reasoningOptions = selectedModelInfo?.reasoningOptions?.length ? selectedModelInfo.reasoningOptions : DEFAULT_REASONING_OPTIONS;
     const supportsReasoning = Boolean(selectedModelInfo?.supportsReasoning);
-    const showReasoningControl = supportsReasoning || providerSettings.forceShowReasoning;
-    const showTemperatureControl = providerSettings.forceShowTemperature;
+    const showReasoningControl = !isNativeMode && (supportsReasoning || providerSettings.forceShowReasoning);
+    const showTemperatureControl = !isNativeMode && providerSettings.forceShowTemperature;
     const cleanedTranslation = sanitizeTranslation(translation);
     const readableTranslation = pdfDocument
         ? cleanedTranslation
@@ -1736,12 +1769,25 @@ function App() {
         }
     };
 
+    const showToast = (message: string, durationMs = 2800) => {
+        if (!message || message.trim() === "" || message === "Loading models...") return;
+        if (toastTimerRef.current) {
+            window.clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
+        }
+        setToastMessage(message);
+        toastTimerRef.current = window.setTimeout(() => {
+            setToastMessage(null);
+            toastTimerRef.current = null;
+        }, durationMs);
+    };
+
+    const setStatusMessage = (message: string) => {
+        showToast(message);
+    };
+
     const showSavedToastMessage = (message: string) => {
-        setShowSavedToast(false);
-        window.setTimeout(() => {
-            setSavedToastMessage(message);
-            setShowSavedToast(true);
-        }, 0);
+        showToast(message);
     };
 
     const commitSmartChunkSizeDraft = () => {
@@ -1752,8 +1798,7 @@ function App() {
     };
 
     const announceAction = (message: string) => {
-        setStatusMessage(message);
-        showSavedToastMessage(message);
+        showToast(message);
     };
 
     const getActiveTranslationContainer = () => {
@@ -2732,13 +2777,6 @@ function App() {
         setEnhancedContextActiveTab("user");
     }, [showEnhancedContextModal, providerSettings.enableEnhancedContextTranslation, providerSettings.enhancedContextGlossary, sourceText]);
 
-    useEffect(() => {
-        if (!showSavedToast) {
-            return;
-        }
-        const timer = window.setTimeout(() => setShowSavedToast(false), 1400);
-        return () => window.clearTimeout(timer);
-    }, [showSavedToast, savedToastMessage]);
 
     useEffect(() => {
         setSmartChunkSizeDraft(String(providerSettings.smartChunkSize));
@@ -2822,6 +2860,14 @@ function App() {
     });
 
     const fetchModels = async () => {
+        if (providerSettings.mode === "apple" || providerSettings.mode === "google-mlkit") {
+            setIsLoadingModels(false);
+            setModels([]);
+            const name = providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)";
+            setStatusMessage(`${name} is ready for on-device direct translation.`);
+            setSettingsStatus(`${name} is active.`);
+            return;
+        }
         setIsLoadingModels(true);
         setSettingsStatus("");
         try {
@@ -2871,7 +2917,7 @@ function App() {
     };
 
     const handleTranslate = async () => {
-        if (!sourceText.trim() || !selectedModel || isTranslating) return;
+        if (!sourceText.trim() || (!selectedModel && !isNativeMode) || isTranslating) return;
 
         const runID = translationRunIdRef.current + 1;
         translationRunIdRef.current = runID;
@@ -2886,14 +2932,23 @@ function App() {
         setLastTopicAwareHintsPreview("");
 
         const runTranslation = async (settings: ProviderSettings) => {
-            const effectiveSettings = fastTranslationEnabled
+            const effectiveSettings = isNativeMode
                 ? {
                     ...settings,
+                    model: settings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)",
                     enablePostEdit: false,
                     enableTopicAwarePostEdit: false,
                     enableEnhancedContextTranslation: false,
+                    enableSmartChunking: false,
                 }
-                : settings;
+                : fastTranslationEnabled
+                    ? {
+                        ...settings,
+                        enablePostEdit: false,
+                        enableTopicAwarePostEdit: false,
+                        enableEnhancedContextTranslation: false,
+                    }
+                    : settings;
             const payload = llm.TranslationRequest.createFrom({
                 settings: llm.ProviderSettings.createFrom({
                     ...effectiveSettings,
@@ -3747,7 +3802,7 @@ function App() {
         setStatusMessage(`Reasoning set to ${value || "Auto"}.`);
     };
 
-    const canTranslate = Boolean(sourceText.trim() && selectedModel && !isTranslating);
+    const canTranslate = Boolean(sourceText.trim() && (selectedModel || isNativeMode) && !isTranslating);
 
     const primaryActionLabel = "Translate";
     const primaryActionIcon = "translate";
@@ -3755,9 +3810,11 @@ function App() {
 
     const activityLabel = isTranslating
         ? `Translating ${formatElapsed(elapsedSeconds)}`
-        : selectedModel
-            ? `${selectedModel} ready`
-            : "No model selected";
+        : isNativeMode
+            ? providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"
+            : selectedModel
+                ? `${selectedModel} ready`
+                : "No model selected";
 
     if (windowMode === "loading" && !isBrowserMode) {
         return <div className="debug-window-shell">Loading window...</div>;
@@ -3783,13 +3840,6 @@ function App() {
         <div className="app-container">
             <div className="app-shell">
                 <header className="topbar no-select">
-                    <div className="brand-group">
-                        <img className="brand-mark" src={brandLogo} alt="DKST logo" />
-                        <div>
-                            <div className="brand-title">DKST Translator AI</div>
-                            <div className="brand-subtitle">Professional local LLM translation workspace for focused AI-assisted translation</div>
-                        </div>
-                    </div>
                     <div className="model-popover-wrap" ref={modelPopoverRef}>
                         <button
                             type="button"
@@ -3842,36 +3892,8 @@ function App() {
                     </button>
                 </header>
 
-                <div className="status-bar">
-                    <span className="status-message">{statusMessage}</span>
-                    {isDevelopmentBuild && (
-                        <div className={`status-summary-shell ${showStatusSummary ? "is-open" : "is-closed"}`}>
-                            <button
-                                className="status-summary-toggle"
-                                onClick={() => setShowStatusSummary(prev => !prev)}
-                                title={showStatusSummary ? "Hide Summary" : "Show Summary"}
-                            >
-                                <span className={`material-symbols-outlined status-summary-icon ${showStatusSummary ? "is-open" : ""}`}>expand_circle_right</span>
-                            </button>
-                            <div className={`status-summary ${showStatusSummary ? "is-open" : ""}`}>
-                                <span className="status-summary-text">
-                                    Source: {sourceLang} | Target: {targetLang} | Reasoning: {providerSettings.reasoning || "auto"} | Temperature: {temperatureLabel} | Fast: {fastTranslationEnabled ? "on" : "off"} | Proofread: {effectivePostEditEnabled ? "on" : "off"} | Smart Chunking: {providerSettings.enableSmartChunking ? `on ${providerSettings.smartChunkSize}` : "off"} | Prompt: {instruction ? "set" : "empty"} |
-                                </span>
-                                {!isBrowserMode && <div className="status-summary-actions">
-                                    <button className={`debug-toggle ${showDebugPanel ? "is-on" : "is-off"}`} onClick={() => setShowDebugPanel((prev: boolean) => !prev)}>
-                                        Debug: {showDebugPanel ? "on" : "off"}
-                                    </button>
-                                    <button className="debug-open-btn" onClick={handleOpenDebugStudioWindow}>
-                                        Open Debug Studio
-                                    </button>
-                                </div>}
-                            </div>
-                        </div>
-                    )}
-                </div>
-
                 <section className="prompt-hero" style={{ ["--editor-font-size" as string]: `${editorFontSize}px` }}>
-                    <div className="prompt-card">
+                    <div className={`prompt-card ${isNativeMode ? "is-native-mode" : ""}`}>
                         {isCompactPromptLayout ? (
                             <div className="prompt-mobile-layout">
                                 {/* 1행: 출발 언어 | (swap) | 도착 언어 (폭 최대로 확보) */}
@@ -3905,16 +3927,18 @@ function App() {
 
                                 {/* 2행: [접고 펼치기 버튼] [번역 버튼] */}
                                 <div className="prompt-mobile-row prompt-mobile-row-translate">
-                                    <button
-                                        type="button"
-                                        className={`prompt-options-toggle ${isPromptOptionsExpanded ? "is-open" : ""}`}
-                                        onClick={() => setIsPromptOptionsExpanded(prev => !prev)}
-                                        title={isPromptOptionsExpanded ? "옵션 접기" : "옵션 펼치기"}
-                                    >
-                                        <span className="material-symbols-outlined">
-                                            {isPromptOptionsExpanded ? "keyboard_double_arrow_up" : "keyboard_double_arrow_down"}
-                                        </span>
-                                    </button>
+                                    {!isNativeMode && (
+                                        <button
+                                            type="button"
+                                            className={`prompt-options-toggle ${isPromptOptionsExpanded ? "is-open" : ""}`}
+                                            onClick={() => setIsPromptOptionsExpanded(prev => !prev)}
+                                            title={isPromptOptionsExpanded ? "옵션 접기" : "옵션 펼치기"}
+                                        >
+                                            <span className="material-symbols-outlined">
+                                                {isPromptOptionsExpanded ? "keyboard_double_arrow_up" : "keyboard_double_arrow_down"}
+                                            </span>
+                                        </button>
+                                    )}
                                     <button
                                         className={primaryActionClassName}
                                         onClick={handleTranslate}
@@ -3926,7 +3950,7 @@ function App() {
                                 </div>
 
                                 {/* 3행: 펼쳤을 때 (번역 버튼 아래로 번역지침 + 상세 설정) */}
-                                {isPromptOptionsExpanded && (
+                                {!isNativeMode && isPromptOptionsExpanded && (
                                     <div className="prompt-mobile-expanded-body">
                                         <textarea
                                             ref={promptInputRef}
@@ -3939,17 +3963,19 @@ function App() {
                                         <div className="prompt-controls prompt-controls-secondary is-compact">
                                             <div className="prompt-secondary-panel is-open">
                                                 <div className="prompt-secondary-group prompt-secondary-group-selects">
-                                                    <button
-                                                        type="button"
-                                                        className="prompt-option-button prompt-inline-action prompt-tooltip"
-                                                        onClick={() => {
-                                                            setShowTemperatureSlider(false);
-                                                            setPromptSelectionModal({ type: "preset" });
-                                                        }}
-                                                        data-tooltip="Prompt Preset"
-                                                    >
-                                                        <span className="material-symbols-outlined prompt-inline-feature-icon">list_alt_add</span>
-                                                    </button>
+                                                    {!isNativeMode && (
+                                                        <button
+                                                            type="button"
+                                                            className="prompt-option-button prompt-inline-action prompt-tooltip"
+                                                            onClick={() => {
+                                                                setShowTemperatureSlider(false);
+                                                                setPromptSelectionModal({ type: "preset" });
+                                                            }}
+                                                            data-tooltip="Prompt Preset"
+                                                        >
+                                                            <span className="material-symbols-outlined prompt-inline-feature-icon">list_alt_add</span>
+                                                        </button>
+                                                    )}
                                                     {showReasoningControl && (
                                                         <button
                                                             type="button"
@@ -4037,28 +4063,32 @@ function App() {
                         ) : (
                             /* 데스크톱 레이아웃 */
                             <>
-                                <textarea
-                                    ref={promptInputRef}
-                                    style={{ fontSize: `${editorFontSize}px` }}
-                                    className="prompt-input"
-                                    placeholder="Enter translation style, protected terms, or Markdown preservation rules."
-                                    value={instruction}
-                                    onChange={e => setInstruction(e.target.value)}
-                                />
+                                {!isNativeMode && (
+                                    <textarea
+                                        ref={promptInputRef}
+                                        style={{ fontSize: `${editorFontSize}px` }}
+                                        className="prompt-input"
+                                        placeholder="Enter translation style, protected terms, or Markdown preservation rules."
+                                        value={instruction}
+                                        onChange={e => setInstruction(e.target.value)}
+                                    />
+                                )}
                                 <div className="prompt-controls prompt-controls-secondary">
                                     <div className="prompt-secondary-panel is-open">
                                         <div className="prompt-secondary-group prompt-secondary-group-selects">
-                                            <button
-                                                type="button"
-                                                className="prompt-option-button prompt-inline-action prompt-tooltip"
-                                                onClick={() => {
-                                                    setShowTemperatureSlider(false);
-                                                    setPromptSelectionModal({ type: "preset" });
-                                                }}
-                                                data-tooltip="Prompt Preset"
-                                            >
-                                                <span className="material-symbols-outlined prompt-inline-feature-icon">list_alt_add</span>
-                                            </button>
+                                            {!isNativeMode && (
+                                                <button
+                                                    type="button"
+                                                    className="prompt-option-button prompt-inline-action prompt-tooltip"
+                                                    onClick={() => {
+                                                        setShowTemperatureSlider(false);
+                                                        setPromptSelectionModal({ type: "preset" });
+                                                    }}
+                                                    data-tooltip="Prompt Preset"
+                                                >
+                                                    <span className="material-symbols-outlined prompt-inline-feature-icon">list_alt_add</span>
+                                                </button>
+                                            )}
                                             {showReasoningControl && (
                                                 <button
                                                     type="button"
@@ -4100,21 +4130,22 @@ function App() {
                                                                 <span>Temperature</span>
                                                                 <strong>{temperatureLabel}</strong>
                                                             </div>
-                                                            <input
-                                                                className="temperature-slider"
-                                                                type="range"
-                                                                min={MIN_TEMPERATURE}
-                                                                max={MAX_TEMPERATURE}
-                                                                step={TEMPERATURE_STEP}
-                                                                value={providerSettings.temperature}
-                                                                onChange={e => setProviderSettings(prev => ({
-                                                                    ...prev,
-                                                                    temperature: clampTemperature(Number.parseFloat(e.target.value)),
-                                                                }))}
-                                                            />
-                                                            <div className="temperature-scale">
-                                                                <span>Auto</span>
-                                                                <span>1.0</span>
+                                                            <div className="temperature-slider-row">
+                                                                <input
+                                                                    type="range"
+                                                                    min={MIN_TEMPERATURE}
+                                                                    max={MAX_TEMPERATURE}
+                                                                    step={TEMPERATURE_STEP}
+                                                                    value={providerSettings.temperature}
+                                                                    onChange={e => {
+                                                                        const val = parseFloat(e.target.value);
+                                                                        setProviderSettings(prev => ({ ...prev, temperature: val }));
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div className="temperature-slider-scale">
+                                                                <span>0.0 (Precise)</span>
+                                                                <span>1.0 (Creative)</span>
                                                             </div>
                                                         </div>
                                                     )}
@@ -4156,50 +4187,52 @@ function App() {
                                                 <span className="hero-translate-label">{primaryActionLabel}</span>
                                             </button>
                                         </div>
-                                        <div className="prompt-secondary-group prompt-secondary-group-toggles">
-                                            <button
-                                                type="button"
-                                                className={`prompt-inline-action prompt-inline-action-fast prompt-tooltip ${fastTranslationEnabled ? "is-on" : ""}`}
-                                                onClick={() => setFastTranslationEnabled(previous => {
-                                                    const next = !previous;
-                                                    setStatusMessage(next
-                                                        ? "Fast translation enabled. Quality-focused post-processing is temporarily disabled."
-                                                        : "Fast translation disabled. Previous quality settings were restored.");
-                                                    return next;
-                                                })}
-                                                data-tooltip="Translate faster by prioritizing speed over quality."
-                                                aria-pressed={fastTranslationEnabled}
-                                            >
-                                                <span className="material-symbols-outlined prompt-inline-feature-icon">bolt</span>
-                                                <span className="material-symbols-outlined prompt-inline-toggle-icon">
-                                                    {fastTranslationEnabled ? "toggle_on" : "toggle_off"}
-                                                </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className={`prompt-inline-action prompt-inline-action-proofread prompt-tooltip ${effectivePostEditEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
-                                                onClick={() => setProviderSettings(prev => ({ ...prev, enablePostEdit: !prev.enablePostEdit }))}
-                                                data-tooltip="Proofread After Translation"
-                                                disabled={fastTranslationEnabled}
-                                            >
-                                                <span className="material-symbols-outlined prompt-inline-feature-icon">grading</span>
-                                                <span className="material-symbols-outlined prompt-inline-toggle-icon">
-                                                    {effectivePostEditEnabled ? "toggle_on" : "toggle_off"}
-                                                </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className={`prompt-inline-action prompt-inline-action-enhanced prompt-tooltip ${effectiveEnhancedContextEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
-                                                onClick={() => setShowEnhancedContextModal(true)}
-                                                data-tooltip="Enhanced Context Translation"
-                                                disabled={fastTranslationEnabled}
-                                            >
-                                                <span className="material-symbols-outlined prompt-inline-feature-icon">contextual_token_add</span>
-                                                <span className="material-symbols-outlined prompt-inline-toggle-icon">
-                                                    {effectiveEnhancedContextEnabled ? "toggle_on" : "toggle_off"}
-                                                </span>
-                                            </button>
-                                        </div>
+                                        {!isNativeMode && (
+                                            <div className="prompt-secondary-group prompt-secondary-group-toggles">
+                                                <button
+                                                    type="button"
+                                                    className={`prompt-inline-action prompt-inline-action-fast prompt-tooltip ${fastTranslationEnabled ? "is-on" : ""}`}
+                                                    onClick={() => setFastTranslationEnabled(previous => {
+                                                        const next = !previous;
+                                                        setStatusMessage(next
+                                                            ? "Fast translation enabled. Quality-focused post-processing is temporarily disabled."
+                                                            : "Fast translation disabled. Previous quality settings were restored.");
+                                                        return next;
+                                                    })}
+                                                    data-tooltip="Translate faster by prioritizing speed over quality."
+                                                    aria-pressed={fastTranslationEnabled}
+                                                >
+                                                    <span className="material-symbols-outlined prompt-inline-feature-icon">bolt</span>
+                                                    <span className="material-symbols-outlined prompt-inline-toggle-icon">
+                                                        {fastTranslationEnabled ? "toggle_on" : "toggle_off"}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`prompt-inline-action prompt-inline-action-proofread prompt-tooltip ${effectivePostEditEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
+                                                    onClick={() => setProviderSettings(prev => ({ ...prev, enablePostEdit: !prev.enablePostEdit }))}
+                                                    data-tooltip="Proofread After Translation"
+                                                    disabled={fastTranslationEnabled}
+                                                >
+                                                    <span className="material-symbols-outlined prompt-inline-feature-icon">grading</span>
+                                                    <span className="material-symbols-outlined prompt-inline-toggle-icon">
+                                                        {effectivePostEditEnabled ? "toggle_on" : "toggle_off"}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`prompt-inline-action prompt-inline-action-enhanced prompt-tooltip ${effectiveEnhancedContextEnabled ? "is-on" : ""} ${fastTranslationEnabled ? "is-disabled" : ""}`}
+                                                    onClick={() => setShowEnhancedContextModal(true)}
+                                                    data-tooltip="Enhanced Context Translation"
+                                                    disabled={fastTranslationEnabled}
+                                                >
+                                                    <span className="material-symbols-outlined prompt-inline-feature-icon">contextual_token_add</span>
+                                                    <span className="material-symbols-outlined prompt-inline-toggle-icon">
+                                                        {effectiveEnhancedContextEnabled ? "toggle_on" : "toggle_off"}
+                                                    </span>
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </>
@@ -4347,7 +4380,17 @@ function App() {
                             <div className="pane-stats">
                                 {pdfDocument && completedPDFPages > 0
                                     ? `${completedPDFPages} / ${pdfDocument.pageCount} pages translated`
-                                    : translationStats}
+                                    : (
+                                        <>
+                                            {providerSettings.mode === "google-mlkit" && (
+                                                <span>Translated by Google Translation · </span>
+                                            )}
+                                            {providerSettings.mode === "apple" && (
+                                                <span>Translated by Apple Translation · </span>
+                                            )}
+                                            {translationStats}
+                                        </>
+                                    )}
                             </div>
                         </div>
                     </div>
@@ -4768,193 +4811,211 @@ function App() {
                                                         <option value="lmstudio">LM Studio</option>
                                                         <option value="openai">OpenAI</option>
                                                         <option value="litertlm">LiteRT-LM (On-device)</option>
+                                                        {isApplePlatform && <option value="apple">Apple Translation</option>}
+                                                        {isMLKitPlatform && <option value="google-mlkit">Google Translation (ML Kit)</option>}
                                                     </select>
                                                 </label>
-                                                <label className="settings-field">
-                                                    <span>Endpoint</span>
-                                                    <input
-                                                        type="text"
-                                                        value={providerSettings.endpoint}
-                                                        onChange={e => setProviderSettings(prev => ({ ...prev, endpoint: e.target.value }))}
-                                                        disabled={providerSettings.mode === "litertlm"}
-                                                        placeholder={providerSettings.mode === "litertlm" ? "Managed by the bundled runtime" : "http://127.0.0.1:1234"}
-                                                    />
-                                                </label>
-                                                <label className="settings-field">
-                                                    <span>API Key</span>
-                                                    <input
-                                                        type="password"
-                                                        value={providerSettings.apiKey}
-                                                        onChange={e => setProviderSettings(prev => ({ ...prev, apiKey: e.target.value }))}
-                                                        disabled={providerSettings.mode === "litertlm"}
-                                                        placeholder={providerSettings.mode === "lmstudio" ? "Required if your local gateway enforces auth" : providerSettings.mode === "litertlm" ? "Not required for on-device inference" : "Required for OpenAI"}
-                                                    />
-                                                </label>
-                                                {providerSettings.mode === "litertlm" && (
+                                                {isNativeMode ? (
+                                                    <div className="native-translation-banner">
+                                                        <div className="native-translation-badge">
+                                                            <span className="material-symbols-outlined">{providerSettings.mode === "apple" ? "translate" : "smart_toy"}</span>
+                                                            <span className="native-translation-name">{providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"}</span>
+                                                        </div>
+                                                        <div className="native-translation-desc">
+                                                            {providerSettings.mode === "apple"
+                                                                ? "Translates instantly in a single pass on-device using the Apple Translation framework without draft/post-edit or enhanced context passes. (Supported: macOS 15+, iOS 18+, iPadOS 18+)"
+                                                                : "Translates instantly in a single pass on-device using Google ML Kit without draft/post-edit or enhanced context passes. (Supported: Android 6.0+, iOS 15.5+, iPadOS 15.5+)"}
+                                                        </div>
+                                                    </div>
+                                                ) : (
                                                     <>
-                                                        <div className="settings-field settings-field-details">
-                                                            <span>Model Package</span>
-                                                            <div className="settings-inline-action">
-                                                                <input
-                                                                    type="text"
-                                                                    value={providerSettings.liteRTModelPath}
-                                                                    onChange={e => setProviderSettings(prev => ({
-                                                                        ...prev,
-                                                                        liteRTModelPath: e.target.value,
-                                                                        model: "",
-                                                                    }))}
-                                                                    placeholder="gemma-2b-it.litertlm"
-                                                                />
-                                                                <button className="btn btn-secondary btn-small" type="button" onClick={handleSelectLiteRTLMModelFile}>
-                                                                    Browse
+                                                        <label className="settings-field">
+                                                            <span>Endpoint</span>
+                                                            <input
+                                                                type="text"
+                                                                value={providerSettings.endpoint}
+                                                                onChange={e => setProviderSettings(prev => ({ ...prev, endpoint: e.target.value }))}
+                                                                disabled={providerSettings.mode === "litertlm"}
+                                                                placeholder={providerSettings.mode === "litertlm" ? "Managed by the bundled runtime" : "http://127.0.0.1:1234"}
+                                                            />
+                                                        </label>
+                                                        <label className="settings-field">
+                                                            <span>API Key</span>
+                                                            <input
+                                                                type="password"
+                                                                value={providerSettings.apiKey}
+                                                                onChange={e => setProviderSettings(prev => ({ ...prev, apiKey: e.target.value }))}
+                                                                disabled={providerSettings.mode === "litertlm"}
+                                                                placeholder={providerSettings.mode === "lmstudio" ? "Required if your local gateway enforces auth" : providerSettings.mode === "litertlm" ? "Not required for on-device inference" : "Required for OpenAI"}
+                                                            />
+                                                        </label>
+                                                        {providerSettings.mode === "litertlm" && (
+                                                            <>
+                                                                <div className="settings-field settings-field-details">
+                                                                    <span>Model Package</span>
+                                                                    <div className="settings-inline-action">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={providerSettings.liteRTModelPath}
+                                                                            onChange={e => setProviderSettings(prev => ({
+                                                                                ...prev,
+                                                                                liteRTModelPath: e.target.value,
+                                                                                model: "",
+                                                                            }))}
+                                                                            placeholder="gemma-2b-it.litertlm"
+                                                                        />
+                                                                        <button className="btn btn-secondary btn-small" type="button" onClick={handleSelectLiteRTLMModelFile}>
+                                                                            Browse
+                                                                        </button>
+                                                                    </div>
+                                                                    <div className="settings-note">LiteRT-LM requires a .litertlm package. A legacy gemma-2b-it .bin must be converted first.</div>
+                                                                </div>
+                                                                <label className="settings-field">
+                                                                    <span>Runtime Mode</span>
+                                                                    <select
+                                                                        value={providerSettings.liteRTRuntimeMode}
+                                                                        onChange={e => setProviderSettings(prev => ({
+                                                                            ...prev,
+                                                                            liteRTRuntimeMode: e.target.value as "ondevice" | "server",
+                                                                            model: "",
+                                                                        }))}
+                                                                    >
+                                                                        <option value="ondevice">On-device only</option>
+                                                                        <option value="server" disabled={isMobilePlatform}>On-device + OpenAI server (desktop)</option>
+                                                                    </select>
+                                                                </label>
+                                                                {isMobilePlatform && (
+                                                                    <div className="settings-note">
+                                                                        Mobile inference stays loopback-only. Enable the app Web Server below to provide authenticated remote translation backed by LiteRT-LM.
+                                                                    </div>
+                                                                )}
+                                                                {providerSettings.liteRTRuntimeMode === "server" && (
+                                                                    <div className="settings-note">
+                                                                        The raw LiteRT-LM endpoint listens on all network interfaces and has no authentication. Use the app Web Server below for password-protected remote translation.
+                                                                    </div>
+                                                                )}
+                                                                <label className="settings-field">
+                                                                    <span>Runtime Port</span>
+                                                                    <input
+                                                                        type="text"
+                                                                        inputMode="numeric"
+                                                                        pattern="[0-9]*"
+                                                                        value={providerSettings.liteRTPort}
+                                                                        onChange={e => {
+                                                                            const port = Math.max(1, Math.min(65535, Number(e.target.value.replace(/[^\d]/g, "")) || 9379));
+                                                                            setProviderSettings(prev => ({
+                                                                                ...prev,
+                                                                                liteRTPort: port,
+                                                                                endpoint: `http://127.0.0.1:${port}`,
+                                                                                model: "",
+                                                                            }));
+                                                                        }}
+                                                                    />
+                                                                </label>
+                                                                <label className="settings-field">
+                                                                    <span>Runtime Binary</span>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={providerSettings.liteRTRuntimePath}
+                                                                        onChange={e => setProviderSettings(prev => ({
+                                                                            ...prev,
+                                                                            liteRTRuntimePath: e.target.value,
+                                                                            model: "",
+                                                                        }))}
+                                                                        placeholder="Bundled runtime (optional override)"
+                                                                    />
+                                                                </label>
+                                                            </>
+                                                        )}
+                                                        <div className="settings-field">
+                                                            <span>Model</span>
+                                                            <div className="toolbar-group model-group">
+                                                                <select value={providerSettings.model} onChange={e => {
+                                                                    handleSelectModel(e.target.value);
+                                                                }} disabled={isLoadingModels}>
+                                                                    <option value="">Select a Model</option>
+                                                                    {models.map(model => (
+                                                                        <option key={model.id} value={model.id}>
+                                                                            {model.displayName || model.id}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <button className="icon-btn" onClick={fetchModels} disabled={isLoadingModels} title="Refresh Models">
+                                                                    <span className="material-symbols-outlined">refresh</span>
                                                                 </button>
                                                             </div>
-                                                            <div className="settings-note">LiteRT-LM requires a .litertlm package. A legacy gemma-2b-it .bin must be converted first.</div>
+                                                        </div>
+                                                        <div className="settings-field">
+                                                            <span>Smart Chunking</span>
+                                                            <label className="settings-checkbox">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={providerSettings.enableSmartChunking}
+                                                                    onChange={e => setProviderSettings(prev => ({
+                                                                        ...prev,
+                                                                        enableSmartChunking: e.target.checked,
+                                                                    }))}
+                                                                />
+                                                                <span>Enabled</span>
+                                                            </label>
                                                         </div>
                                                         <label className="settings-field">
-                                                            <span>Runtime Mode</span>
-                                                            <select
-                                                                value={providerSettings.liteRTRuntimeMode}
-                                                                onChange={e => setProviderSettings(prev => ({
-                                                                    ...prev,
-                                                                    liteRTRuntimeMode: e.target.value as "ondevice" | "server",
-                                                                    model: "",
-                                                                }))}
-                                                            >
-                                                                <option value="ondevice">On-device only</option>
-                                                                <option value="server" disabled={isMobilePlatform}>On-device + OpenAI server (desktop)</option>
-                                                            </select>
-                                                        </label>
-                                                        {isMobilePlatform && (
-                                                            <div className="settings-note">
-                                                                Mobile inference stays loopback-only. Enable the app Web Server below to provide authenticated remote translation backed by LiteRT-LM.
-                                                            </div>
-                                                        )}
-                                                        {providerSettings.liteRTRuntimeMode === "server" && (
-                                                            <div className="settings-note">
-                                                                The raw LiteRT-LM endpoint listens on all network interfaces and has no authentication. Use the app Web Server below for password-protected remote translation.
-                                                            </div>
-                                                        )}
-                                                        <label className="settings-field">
-                                                            <span>Runtime Port</span>
+                                                            <span>Chunk Size</span>
                                                             <input
                                                                 type="text"
                                                                 inputMode="numeric"
                                                                 pattern="[0-9]*"
-                                                                value={providerSettings.liteRTPort}
+                                                                value={smartChunkSizeDraft}
+                                                                disabled={!providerSettings.enableSmartChunking}
                                                                 onChange={e => {
-                                                                    const port = Math.max(1, Math.min(65535, Number(e.target.value.replace(/[^\d]/g, "")) || 9379));
-                                                                    setProviderSettings(prev => ({
-                                                                        ...prev,
-                                                                        liteRTPort: port,
-                                                                        endpoint: `http://127.0.0.1:${port}`,
-                                                                        model: "",
-                                                                    }));
+                                                                    setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
                                                                 }}
+                                                                onBlur={commitSmartChunkSizeDraft}
+                                                                placeholder="2000"
                                                             />
                                                         </label>
-                                                        <label className="settings-field">
-                                                            <span>Runtime Binary</span>
+                                                        <label className="settings-checkbox">
                                                             <input
-                                                                type="text"
-                                                                value={providerSettings.liteRTRuntimePath}
+                                                                type="checkbox"
+                                                                checked={providerSettings.forceShowReasoning}
                                                                 onChange={e => setProviderSettings(prev => ({
                                                                     ...prev,
-                                                                    liteRTRuntimePath: e.target.value,
-                                                                    model: "",
+                                                                    forceShowReasoning: e.target.checked,
                                                                 }))}
-                                                                placeholder="Bundled runtime (optional override)"
                                                             />
+                                                            <span>Force show reasoning control</span>
+                                                        </label>
+                                                        <label className="settings-checkbox">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={effectiveTopicAwarePostEditEnabled}
+                                                                disabled={fastTranslationEnabled}
+                                                                onChange={e => setProviderSettings(prev => ({
+                                                                    ...prev,
+                                                                    enableTopicAwarePostEdit: e.target.checked,
+                                                                }))}
+                                                            />
+                                                            <span>Context-Aware Smart Post-Editing</span>
+                                                        </label>
+                                                        <label className="settings-checkbox">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={providerSettings.forceShowTemperature}
+                                                                onChange={e => {
+                                                                    const isVisible = e.target.checked;
+                                                                    setProviderSettings(prev => ({
+                                                                        ...prev,
+                                                                        forceShowTemperature: isVisible,
+                                                                    }));
+                                                                    if (!isVisible) {
+                                                                        setShowTemperatureSlider(false);
+                                                                    }
+                                                                }}
+                                                            />
+                                                            <span>Show temperature control</span>
                                                         </label>
                                                     </>
                                                 )}
-                                                <div className="settings-field">
-                                                    <span>Model</span>
-                                                    <div className="toolbar-group model-group">
-                                                        <select value={providerSettings.model} onChange={e => {
-                                                            handleSelectModel(e.target.value);
-                                                        }} disabled={isLoadingModels}>
-                                                            <option value="">Select a Model</option>
-                                                            {models.map(model => (
-                                                                <option key={model.id} value={model.id}>
-                                                                    {model.displayName || model.id}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        <button className="icon-btn" onClick={fetchModels} disabled={isLoadingModels} title="Refresh Models">
-                                                            <span className="material-symbols-outlined">refresh</span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <div className="settings-field">
-                                                    <span>Smart Chunking</span>
-                                                    <label className="settings-checkbox">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={providerSettings.enableSmartChunking}
-                                                            onChange={e => setProviderSettings(prev => ({
-                                                                ...prev,
-                                                                enableSmartChunking: e.target.checked,
-                                                            }))}
-                                                        />
-                                                        <span>Enabled</span>
-                                                    </label>
-                                                </div>
-                                                <label className="settings-field">
-                                                    <span>Chunk Size</span>
-                                                    <input
-                                                        type="text"
-                                                        inputMode="numeric"
-                                                        pattern="[0-9]*"
-                                                        value={smartChunkSizeDraft}
-                                                        disabled={!providerSettings.enableSmartChunking}
-                                                        onChange={e => {
-                                                            setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
-                                                        }}
-                                                        onBlur={commitSmartChunkSizeDraft}
-                                                        placeholder="2000"
-                                                    />
-                                                </label>
-                                                <label className="settings-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={providerSettings.forceShowReasoning}
-                                                        onChange={e => setProviderSettings(prev => ({
-                                                            ...prev,
-                                                            forceShowReasoning: e.target.checked,
-                                                        }))}
-                                                    />
-                                                    <span>Force show reasoning control</span>
-                                                </label>
-                                                <label className="settings-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={effectiveTopicAwarePostEditEnabled}
-                                                        disabled={fastTranslationEnabled}
-                                                        onChange={e => setProviderSettings(prev => ({
-                                                            ...prev,
-                                                            enableTopicAwarePostEdit: e.target.checked,
-                                                        }))}
-                                                    />
-                                                    <span>Context-Aware Smart Post-Editing</span>
-                                                </label>
-                                                <label className="settings-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={providerSettings.forceShowTemperature}
-                                                        onChange={e => {
-                                                            const isVisible = e.target.checked;
-                                                            setProviderSettings(prev => ({
-                                                                ...prev,
-                                                                forceShowTemperature: isVisible,
-                                                            }));
-                                                            if (!isVisible) {
-                                                                setShowTemperatureSlider(false);
-                                                            }
-                                                        }}
-                                                    />
-                                                    <span>Show temperature control</span>
-                                                </label>
                                                 <label className="settings-field">
                                                     <span>Theme</span>
                                                     <select
@@ -5079,6 +5140,23 @@ function App() {
                                                 </div>
                                             </section>
                                         )}
+                                        {!isMobilePlatform && !isBrowserMode && isDevelopmentBuild && (
+                                            <section className="settings-section">
+                                                <div className="settings-section-title">Developer Tools</div>
+                                                <div className="settings-grid">
+                                                    <div className="settings-field">
+                                                        <span>Debug Studio</span>
+                                                        <button
+                                                            className="btn btn-secondary btn-small"
+                                                            type="button"
+                                                            onClick={handleOpenDebugStudioWindow}
+                                                        >
+                                                            Open Debug Studio
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </section>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -5125,14 +5203,14 @@ function App() {
                                                 className={`btn btn-secondary enhanced-context-tab${enhancedContextActiveTab === "user" ? " is-active" : ""}`}
                                                 onClick={() => setEnhancedContextActiveTab("user")}
                                             >
-                                                User Glossary
+                                                User Glossary ({enhancedContextUserRows.length})
                                             </button>
                                             <button
                                                 type="button"
                                                 className={`btn btn-secondary enhanced-context-tab${enhancedContextActiveTab === "extracted" ? " is-active" : ""}`}
                                                 onClick={() => setEnhancedContextActiveTab("extracted")}
                                             >
-                                                Frequent Terms From Document
+                                                Extracted Candidates ({enhancedContextExtractedRows.length})
                                             </button>
                                         </div>
                                         {enhancedContextActiveTab === "user" ? (
@@ -5252,7 +5330,11 @@ function App() {
                         </div>
                     </div>
                 )}
-                {showSavedToast && <div className="settings-toast">{savedToastMessage}</div>}
+                {toastMessage && (
+                    <div className="app-toast">
+                        <span>{toastMessage}</span>
+                    </div>
+                )}
                 <div className={`progress-widget ${progressState.visible ? "show" : ""}`}>
                     <div className="progress-layout">
                         <div className="progress-ring">

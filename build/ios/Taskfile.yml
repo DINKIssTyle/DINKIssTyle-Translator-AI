@@ -103,18 +103,32 @@ tasks:
         if [ ! -f "$MAIN_M" ]; then
           MAIN_M=build/ios/main.m
         fi
-        xcrun -sdk {{.IOS_SDK}} clang \
+        MAIN_O="{{.BIN_DIR}}/dkst-ios-main.o"
+        TRANSLATION_O="{{.BIN_DIR}}/dkst-ios-translation.o"
+        xcrun -sdk {{.IOS_SDK}} clang -c \
           -target {{.IOS_TARGET}} \
           -isysroot {{.SDK_PATH}} \
+          -fobjc-arc "$MAIN_M" -o "$MAIN_O"
+        xcrun -sdk {{.IOS_SDK}} swiftc -c -parse-as-library \
+          -target {{.IOS_TARGET}} \
+          -sdk {{.SDK_PATH}} \
+          -module-cache-path /private/tmp/dkst-translator-swift-module-cache \
+          build/apple/TranslationBridge.swift -o "$TRANSLATION_O"
+        xcrun -sdk {{.IOS_SDK}} swiftc \
+          -target {{.IOS_TARGET}} \
+          -sdk {{.SDK_PATH}} \
           -framework Foundation -framework UIKit -framework WebKit \
           -framework Security -framework CoreFoundation \
           -framework UniformTypeIdentifiers \
           -framework LocalAuthentication -framework UserNotifications \
           -framework AVFoundation \
           -framework CoreLocation -framework CoreMotion -framework SystemConfiguration \
-          -lresolv \
+          -framework NaturalLanguage \
+          -framework SwiftUI -Xlinker -weak_framework -Xlinker Translation \
+          -Xlinker -lresolv \
           -o "{{.BIN_DIR}}/{{.APP_NAME | lower}}" \
-          "$MAIN_M" -Wl,-force_load,"{{.BIN_DIR}}/{{.APP_NAME}}.a"
+          "$MAIN_O" "$TRANSLATION_O" \
+          -Xlinker -force_load -Xlinker "{{.BIN_DIR}}/{{.APP_NAME}}.a"
 
   create:app:bundle:
     summary: Creates an iOS `.app` bundle
@@ -285,6 +299,7 @@ tasks:
     cmds:
       - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
       - go run build/ios/scripts/patch_litertlm_xcode.go
+      - pod install --project-directory=build/ios
 
   run:
     summary: Run the application in iOS Simulator
@@ -333,10 +348,10 @@ tasks:
         xcrun simctl launch booted "$BUNDLE_ID"
 
   xcode:
-    summary: Open the generated Xcode project for this app
+    summary: Open the generated Xcode workspace for this app
     cmds:
       - task: generate:ios:xcode
-      - open build/ios/xcode/main.xcodeproj
+      - open build/ios/xcode/main.xcworkspace
 
   logs:
     summary: Stream iOS Simulator logs filtered to this app

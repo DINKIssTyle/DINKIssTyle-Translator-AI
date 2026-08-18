@@ -1,0 +1,13 @@
+framework module MLKitNaturalLanguage {
+  export *
+  link "c++"
+  link "z"
+  link framework "CoreFoundation"
+  link framework "CoreTelephony"
+  link framework "Foundation"
+  link framework "OSLog"
+  link framework "QuartzCore"
+  link framework "Security"
+  link framework "SystemConfiguration"
+  link framework "UIKit"
+}

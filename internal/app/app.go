@@ -13,6 +13,7 @@ import (
 	"dinkisstyle-translator/internal/file"
 	"dinkisstyle-translator/internal/litertlm"
 	"dinkisstyle-translator/internal/llm"
+	"dinkisstyle-translator/internal/translation"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -200,3 +201,8 @@ func (a *App) ConfirmClearSource() (bool, error) {
 func (a *App) GetWindowMode() string {
 	return a.mode
 }
+
+func (a *App) GetPlatformCapabilities() (translation.Capabilities, error) {
+	return translation.NewService().Capabilities(), nil
+}
+

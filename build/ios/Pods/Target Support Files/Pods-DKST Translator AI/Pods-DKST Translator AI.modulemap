@@ -1,0 +1,6 @@
+module Pods_DKST_Translator_AI {
+  umbrella header "Pods-DKST Translator AI-umbrella.h"
+
+  export *
+  module * { export * }
+}

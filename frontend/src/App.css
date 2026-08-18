@@ -180,43 +180,20 @@ input,
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-height: 64px;
+  gap: 10px;
+  min-height: 52px;
   padding: 0 20px;
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--line);
 }
 
-.brand-group {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.brand-mark {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
-  display: block;
-  object-fit: contain;
-  flex: 0 0 46px;
-}
-
-.brand-title {
-  font-size: 1.1rem;
-  font-weight: 900;
-  letter-spacing: -0.03em;
-}
-
-.brand-subtitle {
-  margin-top: 2px;
-  color: var(--text-soft);
-  font-size: 0.82rem;
-}
-
 .model-popover-wrap {
   position: relative;
   margin-left: auto;
+}
+
+.topbar .toolbar-group {
+  margin-left: 0;
 }
 
 .activity-pill {
@@ -486,126 +463,52 @@ textarea:focus {
   box-shadow: var(--ui-chip-hover-shadow);
 }
 
-.status-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 20px;
-  background: var(--status-bar-bg);
-  color: var(--text-soft);
-  font-size: 0.71rem;
-  white-space: nowrap;
-  overflow: hidden;
-  border-bottom: 1px solid var(--line);
-}
-
-.status-message {
-  min-width: 0;
-  flex: 1 1 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-summary-shell {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-.status-summary-toggle {
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  color: var(--text-soft);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex: 0 0 auto;
-  padding: 0;
-}
-
-.status-summary-icon {
-  font-size: 18px;
-  transition: transform 0.2s ease;
-}
-
-.status-summary-icon.is-open {
-  transform: rotate(0deg);
-}
-
-.status-summary-shell.is-closed .status-summary-icon {
-  transform: rotate(180deg);
-}
-
-.status-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  min-width: 0;
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transform: translateX(-8px);
-  transition: max-width 0.24s ease, opacity 0.18s ease, transform 0.24s ease;
-}
-
-.status-summary.is-open {
-  max-width: 1200px;
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.status-summary-text {
-  white-space: nowrap;
-}
-
-.status-summary-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.debug-toggle {
-  margin-left: 6px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-weight: 400;
-}
-
-.debug-toggle.is-on {
-  font-weight: 400;
-}
-
-.debug-toggle.is-off {
-  font-weight: 400;
-}
-
-.debug-open-btn {
-  min-height: 10px;
-  padding: 0 10px;
-  border: 1px solid rgba(47, 124, 246, 0.2);
-  border-radius: 999px;
-  background: rgba(47, 124, 246, 0.08);
-  color: var(--accent);
-  font-size: 0.71rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
 .prompt-hero {
-  padding: 0 20px 10px;
+  padding: 14px 20px 10px;
   display: flex;
   justify-content: center;
 }
+
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 999;
+  max-width: min(560px, calc(100vw - 32px));
+  text-align: center;
+  pointer-events: none;
+  animation: toast-appear 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .app-toast {
+  background: rgba(30, 41, 59, 0.92);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+@keyframes toast-appear {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
 
 .prompt-card {
   width: min(1040px, 100%);
@@ -3266,15 +3169,14 @@ textarea {
     flex: 0 0 34px;
   }
 
-  .status-bar {
-    display: none;
-  }
 
   .prompt-hero {
-    padding-top: 8px;
+    padding: 8px 12px 6px;
+    width: 100%;
   }
 
   .prompt-card {
+    width: 100%;
     padding: 10px 12px;
   }
 
@@ -3514,6 +3416,21 @@ textarea {
     max-height: 100dvh;
   }
 
+  .modal-card-fullscreen .modal-header.modal-header-stacked {
+    justify-content: flex-end;
+    padding: 10px 12px;
+  }
+
+  .modal-card-fullscreen .modal-header.modal-header-stacked .modal-title {
+    display: none;
+  }
+
+  .modal-card-fullscreen .modal-header-actions-wrap {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
   .app-shell {
     height: 100dvh;
     min-height: 100dvh;
@@ -3699,4 +3616,80 @@ textarea:disabled {
   color: var(--text-soft);
 }
 
+.native-translation-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(47, 124, 246, 0.25);
+  border-radius: 10px;
+  margin-top: 4px;
+}
 
+.native-translation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.native-translation-badge .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.native-translation-name {
+  letter-spacing: -0.01em;
+}
+
+.native-translation-desc {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+
+.prompt-secondary-group-native {
+  display: flex;
+  align-items: center;
+}
+
+.native-direct-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(47, 124, 246, 0.25);
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.native-direct-pill .material-symbols-outlined {
+  font-size: 15px;
+}
+
+[data-theme="dark"] .native-translation-banner {
+  background: rgba(56, 139, 253, 0.12);
+  border-color: rgba(56, 139, 253, 0.3);
+}
+
+[data-theme="dark"] .native-direct-pill {
+  background: rgba(56, 139, 253, 0.16);
+  border-color: rgba(56, 139, 253, 0.35);
+  color: var(--accent);
+}
+
+.prompt-card.is-native-mode {
+  padding: 8px 12px;
+}
+
+.prompt-card.is-native-mode .prompt-controls-secondary {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}

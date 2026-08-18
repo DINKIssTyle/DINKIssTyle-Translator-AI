@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		9D97C561D836AA965E26BF44 /* libPods-DKST Translator AI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1382D8BFE8E02FE2FCA10B1B /* libPods-DKST Translator AI.a */; };
 		C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };
 		C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000101 /* UIKit.framework */; };
 		C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000102 /* Foundation.framework */; };
@@ -17,9 +18,16 @@
 		C0DEBEEF00000000000000F7 /* DKST Translator AI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000107 /* DKST Translator AI.a */; };
 		C0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };
 		C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };
+		C0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000212 /* TranslationBridge.swift */; };
+		C0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
+		C0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };
+		C0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1382D8BFE8E02FE2FCA10B1B /* libPods-DKST Translator AI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-DKST Translator AI.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		27C3485A61F483D3652E6FD6 /* Pods-DKST Translator AI.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.release.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.release.xcconfig"; sourceTree = "<group>"; };
+		73CCD92449BB6524D9D2515A /* Pods-DKST Translator AI.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.debug.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.debug.xcconfig"; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000004 /* DKST Translator AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "DKST Translator AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -31,6 +39,10 @@
 		C0DEBEEF0000000000000106 /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000107 /* DKST Translator AI.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = "DKST Translator AI.a"; path = "../../../bin/DKST Translator AI.a"; sourceTree = SOURCE_ROOT; };
 		C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = "<group>"; };
+		C0DEBEEF0000000000000212 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = "<group>"; };
+		C0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };
+		C0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };
+		C0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -40,24 +52,50 @@
 			files = (
 				C0DEBEEF00000000000000F7 /* DKST Translator AI.a in Frameworks */,
 				C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */,
+				C0DEBEEF0000000000000213 /* Translation.framework in Frameworks */,
+				C0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */,
+				C0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */,
 				C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */,
 				C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */,
 				C0DEBEEF00000000000000F3 /* WebKit.framework in Frameworks */,
 				C0DEBEEF00000000000000F4 /* Security.framework in Frameworks */,
 				C0DEBEEF00000000000000F5 /* CoreFoundation.framework in Frameworks */,
 				C0DEBEEF00000000000000F6 /* libresolv.tbd in Frameworks */,
+				9D97C561D836AA965E26BF44 /* libPods-DKST Translator AI.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		7B4325A6A82F0B831E565AC6 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				73CCD92449BB6524D9D2515A /* Pods-DKST Translator AI.debug.xcconfig */,
+				27C3485A61F483D3652E6FD6 /* Pods-DKST Translator AI.release.xcconfig */,
+			);
+			name = Pods;
+			path = ../Pods;
+			sourceTree = "<group>";
+		};
+		B3CA7EC9303421DB004C8058 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				C0DEBEEF0000000000000214 /* Translation.framework */,
+				C0DEBEEF0000000000000216 /* NaturalLanguage.framework */,
+				C0DEBEEF0000000000000218 /* SwiftUI.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		C0DEBEEF0000000000000010 = {
 			isa = PBXGroup;
 			children = (
 				C0DEBEEF0000000000000020 /* Products */,
 				C0DEBEEF0000000000000045 /* Frameworks */,
 				C0DEBEEF0000000000000030 /* main */,
+				7B4325A6A82F0B831E565AC6 /* Pods */,
+				B3CA7EC9303421DB004C8058 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -74,6 +112,7 @@
 			children = (
 				C0DEBEEF0000000000000002 /* main.m */,
 				C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */,
+				C0DEBEEF0000000000000212 /* TranslationBridge.swift */,
 				C0DEBEEF0000000000000003 /* Info.plist */,
 			);
 			path = main;
@@ -89,6 +128,7 @@
 				C0DEBEEF0000000000000105 /* CoreFoundation.framework */,
 				C0DEBEEF0000000000000106 /* libresolv.tbd */,
 				C0DEBEEF0000000000000107 /* DKST Translator AI.a */,
+				1382D8BFE8E02FE2FCA10B1B /* libPods-DKST Translator AI.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -100,9 +140,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = C0DEBEEF0000000000000070 /* Build configuration list for PBXNativeTarget "DKST Translator AI" */;
 			buildPhases = (
+				8DD04A45FA72B30076E16101 /* [CP] Check Pods Manifest.lock */,
 				C0DEBEEF0000000000000055 /* Prebuild: Wails Go Archive */,
 				C0DEBEEF0000000000000050 /* Sources */,
 				C0DEBEEF0000000000000056 /* Frameworks */,
+				C0DEBEEF0000000000000208 /* Embed & Sign Dynamic Frameworks */,
+				C83658BE7FBC21DCDFD61068 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -151,6 +194,28 @@
 /* End PBXProject section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		8DD04A45FA72B30076E16101 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-DKST Translator AI-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 		C0DEBEEF0000000000000055 /* Prebuild: Wails Go Archive */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -169,6 +234,45 @@
 			shellPath = /bin/sh;
 			shellScript = "set -e\nAPP_ROOT=\"${PROJECT_DIR}/../../..\"\nPLATFORM=${PLATFORM_NAME:-iphonesimulator}\nSDK_PATH=${SDKROOT:-$(xcrun --sdk ${PLATFORM} --show-sdk-path)}\nif [ ${PLATFORM} = iphonesimulator ]; then GO_TARGET=arm64-apple-ios15.0-simulator; MIN_FLAG=-mios-simulator-version-min=15.0; else GO_TARGET=arm64-apple-ios15.0; MIN_FLAG=-miphoneos-version-min=15.0; fi\nexport GOOS=ios\nexport GOARCH=arm64\nexport CGO_ENABLED=1\nexport CGO_CFLAGS=\"-isysroot ${SDK_PATH} -target ${GO_TARGET} ${MIN_FLAG}\"\nexport CGO_LDFLAGS=\"-isysroot ${SDK_PATH} -target ${GO_TARGET}\"\n# Xcode does not inherit the interactive shell PATH. Locate toolchains explicitly.\nexport PATH=\"/usr/local/go/bin:/opt/homebrew/bin:${HOME}/go/bin:${HOME}/.local/bin:${PATH}\"\nGO_BIN=\"${GO_BINARY:-}\"\nif [ -z \"${GO_BIN}\" ]; then GO_BIN=$(command -v go 2>/dev/null || true); fi\nif [ -z \"${GO_BIN}\" ] || [ ! -x \"${GO_BIN}\" ]; then\n  echo \"Go was not found. Install Go or set GO_BINARY to its absolute path in the Xcode scheme.\" >&2\n  exit 127\nfi\ncd \"${APP_ROOT}\"\n# Ensure overlay exists\nif [ ! -f build/ios/xcode/overlay.json ]; then\n  WAILS_BIN=\"${WAILS3_BINARY:-}\"\n  if [ -z \"${WAILS_BIN}\" ]; then WAILS_BIN=$(command -v wails3 2>/dev/null || true); fi\n  if [ -z \"${WAILS_BIN}\" ] || [ ! -x \"${WAILS_BIN}\" ]; then\n    echo \"wails3 was not found. Install it or set WAILS3_BINARY to its absolute path in the Xcode scheme.\" >&2\n    exit 127\n  fi\n  \"${WAILS_BIN}\" ios overlay:gen -out build/ios/xcode/overlay.json -config build/config.yml\nfi\n# Always rebuild the Go c-archive; Go's build cache keeps this fast\n# and avoids stale binaries when .go sources change.\necho \"Building Go c-archive...\"\n\"${GO_BIN}\" build -buildmode=c-archive -overlay build/ios/xcode/overlay.json -o \"bin/DKST Translator AI.a\"\n";
 		};
+		C0DEBEEF0000000000000208 /* Embed & Sign Dynamic Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed & Sign Dynamic Frameworks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "FRAMEWORKS_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nmkdir -p \"${FRAMEWORKS_DIR}\"\nSRC_FW=\"\"\nif [ -d \"${BUILT_PRODUCTS_DIR}/CLiteRTLM.framework\" ]; then\n  SRC_FW=\"${BUILT_PRODUCTS_DIR}/CLiteRTLM.framework\"\nelif [ -d \"${BUILT_PRODUCTS_DIR}/PackageFrameworks/CLiteRTLM.framework\" ]; then\n  SRC_FW=\"${BUILT_PRODUCTS_DIR}/PackageFrameworks/CLiteRTLM.framework\"\nelse\n  SRC_FW=$(find \"${BUILD_DIR}/..\" -name \"CLiteRTLM.framework\" -type d 2>/dev/null | grep -v \"${FRAMEWORKS_FOLDER_PATH}\" | head -n 1)\nfi\n\nif [ -n \"${SRC_FW}\" ] && [ -d \"${SRC_FW}\" ]; then\n  echo \"Embedding CLiteRTLM.framework from ${SRC_FW} to ${FRAMEWORKS_DIR}\"\n  rsync -a --delete \"${SRC_FW}\" \"${FRAMEWORKS_DIR}/\"\n  if [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n    /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"${FRAMEWORKS_DIR}/CLiteRTLM.framework\"\n  fi\nfi\n";
+		};
+		C83658BE7FBC21DCDFD61068 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			inputPaths = (
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -178,6 +282,7 @@
 			files = (
 				C0DEBEEF0000000000000001 /* main.m in Sources */,
 				C0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */,
+				C0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -186,6 +291,7 @@
 /* Begin XCBuildConfiguration section */
 		C0DEBEEF0000000000000090 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 73CCD92449BB6524D9D2515A /* Pods-DKST Translator AI.debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
@@ -193,7 +299,7 @@
 				DEVELOPMENT_TEAM = QQ3GJ5KGP2;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				INFOPLIST_FILE = main/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.5;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -201,6 +307,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
+					"-all_load",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinkisstyle.translatorai;
 				PRODUCT_NAME = "DKST Translator AI";
@@ -211,6 +318,7 @@
 		};
 		C0DEBEEF00000000000000A0 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 27C3485A61F483D3652E6FD6 /* Pods-DKST Translator AI.release.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
@@ -218,7 +326,7 @@
 				DEVELOPMENT_TEAM = QQ3GJ5KGP2;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				INFOPLIST_FILE = main/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.5;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -226,6 +334,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
+					"-all_load",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinkisstyle.translatorai;
 				PRODUCT_NAME = "DKST Translator AI";

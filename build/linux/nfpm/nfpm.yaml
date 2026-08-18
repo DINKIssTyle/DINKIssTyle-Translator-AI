@@ -23,9 +23,6 @@ contents:
     dst: "/usr/share/icons/hicolor/128x128/apps/dkst-translator-ai.png"
   - src: "./build/linux/dkst-translator-ai.desktop"
     dst: "/usr/share/applications/dkst-translator-ai.desktop"
-  - src: "./third_party/litertlm/linux-${GOARCH}"
-    dst: "/usr/local/bin/litertlm/linux-${GOARCH}"
-    type: tree
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

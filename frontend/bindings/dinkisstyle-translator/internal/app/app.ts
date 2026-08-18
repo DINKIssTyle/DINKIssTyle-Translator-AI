@@ -19,6 +19,9 @@ import * as llm$0 from "../llm/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as pdfengine$0 from "../pdfengine/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as translation$0 from "../translation/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -56,9 +59,15 @@ export function GetModels(settings: llm$0.ProviderSettings): $CancellablePromise
     });
 }
 
+export function GetPlatformCapabilities(): $CancellablePromise<translation$0.Capabilities> {
+    return $Call.ByID(1948844707).then(($result: any) => {
+        return $$createType4($result);
+    });
+}
+
 export function GetWebServerSettings(): $CancellablePromise<$models.WebServerSettings> {
     return $Call.ByID(2873616034).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -76,7 +85,7 @@ export function OpenDebugStudioWindow(): $CancellablePromise<void> {
 
 export function OpenDocument(): $CancellablePromise<file$0.OpenedDocument> {
     return $Call.ByID(3147136995).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType6($result);
     });
 }
 
@@ -89,7 +98,7 @@ export function OpenFile(): $CancellablePromise<string> {
 
 export function OpenPDF(): $CancellablePromise<file$0.PDFDocument> {
     return $Call.ByID(2331218116).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType7($result);
     });
 }
 
@@ -99,7 +108,7 @@ export function ReadDebugStudioState(): $CancellablePromise<string> {
 
 export function RecoverPDFCheckpoint(): $CancellablePromise<$models.PDFCheckpointRecovery> {
     return $Call.ByID(2921514870).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -120,7 +129,7 @@ export function SavePDF(dataBase64: string, defaultFilename: string): $Cancellab
 
 export function SaveWebServerSettings(input: $models.WebServerSettingsInput): $CancellablePromise<$models.WebServerSettings> {
     return $Call.ByID(3651595085, input).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -144,7 +153,8 @@ const $$createType0 = pdfengine$0.Result.createFrom;
 const $$createType1 = llm$0.ProviderSettings.createFrom;
 const $$createType2 = llm$0.ModelInfo.createFrom;
 const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = $models.WebServerSettings.createFrom;
-const $$createType5 = file$0.OpenedDocument.createFrom;
-const $$createType6 = pdfengine$0.Document.createFrom;
-const $$createType7 = $models.PDFCheckpointRecovery.createFrom;
+const $$createType4 = translation$0.Capabilities.createFrom;
+const $$createType5 = $models.WebServerSettings.createFrom;
+const $$createType6 = file$0.OpenedDocument.createFrom;
+const $$createType7 = pdfengine$0.Document.createFrom;
+const $$createType8 = $models.PDFCheckpointRecovery.createFrom;

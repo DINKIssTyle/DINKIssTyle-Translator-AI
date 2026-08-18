@@ -1,0 +1,18 @@
+ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES
+CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = arm64
+FRAMEWORK_SEARCH_PATHS = $(inherited) "${PODS_ROOT}/MLKitCommon/Frameworks" "${PODS_ROOT}/MLKitNaturalLanguage/Frameworks" "${PODS_ROOT}/MLKitTranslate/Frameworks"
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) COCOAPODS=1 $(inherited) PB_FIELD_32BIT=1 PB_NO_PACKED_STRUCTS=1 PB_ENABLE_MALLOC=1
+HEADER_SEARCH_PATHS = $(inherited) "${PODS_ROOT}/Headers/Public" "${PODS_ROOT}/Headers/Public/GTMSessionFetcher" "${PODS_ROOT}/Headers/Public/GoogleDataTransport" "${PODS_ROOT}/Headers/Public/GoogleMLKit" "${PODS_ROOT}/Headers/Public/GoogleToolboxForMac" "${PODS_ROOT}/Headers/Public/GoogleUtilities" "${PODS_ROOT}/Headers/Public/PromisesObjC" "${PODS_ROOT}/Headers/Public/SSZipArchive" "${PODS_ROOT}/Headers/Public/nanopb" $(inherited) ${PODS_ROOT}/GoogleMLKit/MLKitCore/Sources
+LIBRARY_SEARCH_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/GTMSessionFetcher" "${PODS_CONFIGURATION_BUILD_DIR}/GoogleDataTransport" "${PODS_CONFIGURATION_BUILD_DIR}/GoogleToolboxForMac" "${PODS_CONFIGURATION_BUILD_DIR}/GoogleUtilities" "${PODS_CONFIGURATION_BUILD_DIR}/PromisesObjC" "${PODS_CONFIGURATION_BUILD_DIR}/SSZipArchive" "${PODS_CONFIGURATION_BUILD_DIR}/nanopb" "${TOOLCHAIN_DIR}/usr/lib/swift/${PLATFORM_NAME}" /usr/lib/swift
+OTHER_CFLAGS = $(inherited) -fmodule-map-file="${PODS_ROOT}/Headers/Public/FBLPromises/PromisesObjC.modulemap" -fmodule-map-file="${PODS_ROOT}/Headers/Public/GTMSessionFetcher/GTMSessionFetcher.modulemap" -fmodule-map-file="${PODS_ROOT}/Headers/Public/SSZipArchive/SSZipArchive.modulemap"
+OTHER_LDFLAGS = $(inherited) -ObjC -l"GTMSessionFetcher" -l"GoogleDataTransport" -l"GoogleToolboxForMac" -l"GoogleUtilities" -l"PromisesObjC" -l"SSZipArchive" -l"c++" -l"iconv" -l"nanopb" -l"sqlite3" -l"z" -framework "CoreTelephony" -framework "Foundation" -framework "LocalAuthentication" -framework "MLKitCommon" -framework "MLKitNaturalLanguage" -framework "MLKitTranslate" -framework "Security" -framework "SystemConfiguration"
+OTHER_MODULE_VERIFIER_FLAGS = $(inherited) "-F${PODS_CONFIGURATION_BUILD_DIR}/GTMSessionFetcher" "-F${PODS_CONFIGURATION_BUILD_DIR}/GoogleDataTransport" "-F${PODS_CONFIGURATION_BUILD_DIR}/GoogleMLKit" "-F${PODS_CONFIGURATION_BUILD_DIR}/GoogleToolboxForMac" "-F${PODS_CONFIGURATION_BUILD_DIR}/GoogleUtilities" "-F${PODS_CONFIGURATION_BUILD_DIR}/MLKitCommon" "-F${PODS_CONFIGURATION_BUILD_DIR}/MLKitNaturalLanguage" "-F${PODS_CONFIGURATION_BUILD_DIR}/MLKitTranslate" "-F${PODS_CONFIGURATION_BUILD_DIR}/PromisesObjC" "-F${PODS_CONFIGURATION_BUILD_DIR}/SSZipArchive" "-F${PODS_CONFIGURATION_BUILD_DIR}/nanopb"
+OTHER_SWIFT_FLAGS = $(inherited) -D COCOAPODS -Xcc -fmodule-map-file="${PODS_ROOT}/Headers/Public/FBLPromises/PromisesObjC.modulemap" -Xcc -fmodule-map-file="${PODS_ROOT}/Headers/Public/GTMSessionFetcher/GTMSessionFetcher.modulemap" -Xcc -fmodule-map-file="${PODS_ROOT}/Headers/Public/SSZipArchive/SSZipArchive.modulemap"
+PODS_BUILD_DIR = ${BUILD_DIR}
+PODS_CONFIGURATION_BUILD_DIR = ${PODS_BUILD_DIR}/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)
+PODS_PODFILE_DIR_PATH = ${SRCROOT}/..
+PODS_ROOT = ${SRCROOT}/../Pods
+PODS_XCFRAMEWORKS_BUILD_DIR = $(PODS_CONFIGURATION_BUILD_DIR)/XCFrameworkIntermediates
+SWIFT_INCLUDE_PATHS = $(inherited) "${PODS_CONFIGURATION_BUILD_DIR}/GoogleMLKit"
+USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES = YES
