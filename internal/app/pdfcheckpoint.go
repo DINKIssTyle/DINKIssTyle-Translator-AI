@@ -398,6 +398,9 @@ func (a *App) RecoverPDFCheckpoint() (PDFCheckpointRecovery, error) {
 		return PDFCheckpointRecovery{}, err
 	}
 	if !shouldRecoverPDFCheckpoint(manifest) {
+		if manifest.Status == "completed" || manifest.CompletedPages >= manifest.PageCount {
+			_ = store.clear()
+		}
 		return PDFCheckpointRecovery{}, nil
 	}
 	document := file.PDFDocument{
@@ -438,7 +441,28 @@ func (a *App) RecoverPDFCheckpoint() (PDFCheckpointRecovery, error) {
 }
 
 func shouldRecoverPDFCheckpoint(manifest pdfCheckpointManifest) bool {
-	return manifest.CompletedPages > 0 && !manifest.CleanShutdown
+	if manifest.Status == "completed" || manifest.CompletedPages <= 0 || manifest.CompletedPages >= manifest.PageCount {
+		return false
+	}
+	return (manifest.Status == "in_progress" || manifest.Status == "interrupted") && !manifest.CleanShutdown
+}
+
+func (s *pdfCheckpointStore) clear() error {
+	if s.dir == "" {
+		return nil
+	}
+	_ = os.Remove(s.manifestPath())
+	_ = os.Remove(s.sourcePath())
+	_ = os.Remove(s.partialPath())
+	_ = os.Remove(s.partialMetadataPath())
+	return nil
+}
+
+func (a *App) ClearPDFCheckpoint() error {
+	store := newPDFCheckpointStore()
+	a.pdfCheckpointMu.Lock()
+	defer a.pdfCheckpointMu.Unlock()
+	return store.clear()
 }
 
 func (a *App) markPDFCheckpointCleanShutdown() {

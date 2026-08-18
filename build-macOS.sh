@@ -14,7 +14,7 @@ ENTITLEMENTS="build/darwin/dkst.entitlements.plist"
 echo "=== Starting macOS Build Process ==="
 
 # 1. Environment Cleanup and Tool Verification
-echo "[1/5] Cleaning up environment and checking tools..."
+echo "[1/4] Cleaning up environment and checking tools..."
 rm -rf "$APP_BUNDLE"
 rm -rf "$GENERATED_APP"
 rm -f "$BUILD_DIR/$APP_NAME"
@@ -27,7 +27,7 @@ if ! command -v wails3 &> /dev/null; then
 fi
 
 # 2. Build and package with Wails v3 (universal binary)
-echo "[2/5] Building application with Wails v3..."
+echo "[2/4] Building application with Wails v3..."
 wails3 task darwin:package:universal
 mv "$GENERATED_APP" "$APP_BUNDLE"
 

@@ -22,6 +22,7 @@ import {
     OpenPDF,
     ReadDebugStudioState,
     RecoverPDFCheckpoint,
+    ClearPDFCheckpoint,
     SaveFile,
     SavePDF,
     SaveHostProviderSettings,
@@ -1487,7 +1488,7 @@ function App() {
             if (list && list.length > 0) {
                 setProviderSettings(prev => {
                     if (prev.mode === "litertlm" && (!prev.liteRTModelPath || !prev.model)) {
-                        const target = list.find(m => m.name.includes("-gpu")) || list[0];
+                        const target = list.find((m: any) => m.name.includes("-gpu")) || list[0];
                         const modelId = target.name.replace(/\.litertlm$/i, "");
                         return {
                             ...prev,
@@ -2566,6 +2567,9 @@ function App() {
 
         onWailsEvent("translation:complete", (payload: TranslationCompletePayload) => {
             clearAllDraftSkeletons();
+            if (!isBrowserMode) {
+                void ClearPDFCheckpoint();
+            }
             const renderedChunkText = joinRenderedChunks(renderedChunksRef.current);
             setTranslation(payload.text || renderedChunkText || "");
             setTranslationCompletionID(value => value + 1);
@@ -3050,6 +3054,237 @@ function App() {
                 instruction,
                 documentType: pdfDocument ? "pdf" : "",
             });
+            const isAndroidMLKit = (desktopPlatform === "android" || typeof (window as any).dkstTranslation !== "undefined") &&
+                ((effectiveSettings.mode as string) === "google-mlkit" || (effectiveSettings.mode as string) === "google" || (effectiveSettings.mode as string) === "native" || (effectiveSettings.mode as string) === "apple");
+
+            if (isAndroidMLKit) {
+                browserTranslateAbortRef.current?.abort();
+                const controller = new AbortController();
+                browserTranslateAbortRef.current = controller;
+                const bridge = (window as any).dkstTranslation;
+                if (!bridge) {
+                    throw new Error("ML Kit translation is unavailable on this device.");
+                }
+
+                // Split into paragraph text units
+                const rawParagraphs = sourceText.split(/\n{2,}/);
+                const units: string[] = [];
+                for (const p of rawParagraphs) {
+                    const trimmed = p.trim();
+                    if (!trimmed) continue;
+                    if (trimmed.length > 500) {
+                        const sentences = trimmed.match(/[^.!?\n]+[.!?]+|\S+/g) || [trimmed];
+                        let current = "";
+                        for (const s of sentences) {
+                            if (current && current.length + s.length > 500) {
+                                units.push(current.trim());
+                                current = s;
+                            } else {
+                                current = current ? current + " " + s : s;
+                            }
+                        }
+                        if (current.trim()) units.push(current.trim());
+                    } else {
+                        units.push(trimmed);
+                    }
+                }
+                const textUnits = units.length > 0 ? units : [sourceText];
+
+                const detectLanguageFromText = (text: string): string => {
+                    if (!text || !text.trim()) return "en";
+                    const sample = text.slice(0, 2000);
+                    const koreanMatches = sample.match(/[\uAC00-\uD7A3\u1100-\u11FF\u3130-\u318F]/g);
+                    const koreanCount = koreanMatches ? koreanMatches.length : 0;
+                    const japaneseMatches = sample.match(/[\u3040-\u309F\u30A0-\u30FF]/g);
+                    const japaneseCount = japaneseMatches ? japaneseMatches.length : 0;
+                    const chineseMatches = sample.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/g);
+                    const chineseCount = chineseMatches ? chineseMatches.length : 0;
+                    const cyrillicMatches = sample.match(/[\u0400-\u04FF]/g);
+                    const cyrillicCount = cyrillicMatches ? cyrillicMatches.length : 0;
+                    const arabicMatches = sample.match(/[\u0600-\u06FF]/g);
+                    const arabicCount = arabicMatches ? arabicMatches.length : 0;
+                    const totalChars = sample.replace(/\s+/g, "").length || 1;
+
+                    if (koreanCount / totalChars > 0.08) return "ko";
+                    if (japaneseCount / totalChars > 0.05) return "ja";
+                    if (chineseCount / totalChars > 0.15 && japaneseCount === 0 && koreanCount === 0) return "zh";
+                    if (cyrillicCount / totalChars > 0.15) return "ru";
+                    if (arabicCount / totalChars > 0.15) return "ar";
+
+                    const words = sample.toLowerCase().match(/[a-zà-ÿ]+/g) || [];
+                    if (words.length > 3) {
+                        let es = 0, fr = 0, de = 0, it = 0, pt = 0;
+                        for (const w of words) {
+                            if (["de", "la", "que", "el", "en", "los", "del", "las", "por", "con", "una", "para"].includes(w)) es++;
+                            if (["de", "la", "le", "et", "les", "des", "du", "une", "que", "est", "pour", "dans"].includes(w)) fr++;
+                            if (["der", "die", "und", "in", "den", "von", "zu", "das", "mit", "sich", "des", "auf", "ist"].includes(w)) de++;
+                            if (["di", "il", "che", "la", "per", "del", "da", "una", "sono", "con", "non", "dei"].includes(w)) it++;
+                            if (["do", "da", "em", "um", "para", "com", "nao", "uma", "os", "no", "se", "na", "por"].includes(w)) pt++;
+                        }
+                        const maxScore = Math.max(es, fr, de, it, pt);
+                        if (maxScore >= 3) {
+                            if (maxScore === de) return "de";
+                            if (maxScore === fr) return "fr";
+                            if (maxScore === es && es > pt) return "es";
+                            if (maxScore === pt) return "pt";
+                            if (maxScore === it) return "it";
+                        }
+                    }
+                    return "en";
+                };
+
+                const mapLangCode = (lang: string, fallbackSampleText?: string) => {
+                    const l = (lang || "").toLowerCase().trim();
+                    if (!l || l === "auto" || l === "auto-detect" || l === "detect") {
+                        return fallbackSampleText ? detectLanguageFromText(fallbackSampleText) : "en";
+                    }
+                    if (l.includes("korean") || l === "ko") return "ko";
+                    if (l.includes("english") || l === "en") return "en";
+                    if (l.includes("japanese") || l === "ja") return "ja";
+                    if (l.includes("chinese") || l === "zh") return "zh";
+                    if (l.includes("spanish") || l === "es") return "es";
+                    if (l.includes("french") || l === "fr") return "fr";
+                    if (l.includes("german") || l === "de") return "de";
+                    if (l.includes("russian") || l === "ru") return "ru";
+                    if (l.includes("italian") || l === "it") return "it";
+                    if (l.includes("portuguese") || l === "pt") return "pt";
+                    return lang;
+                };
+
+                const sLang = mapLangCode(sourceLang, sourceText);
+                const tLang = mapLangCode(targetLang);
+
+                const batches: string[][] = [];
+                let currentBatch: string[] = [];
+                let currentChars = 0;
+                for (const u of textUnits) {
+                    if (currentBatch.length > 0 && (currentBatch.length >= 8 || currentChars + u.length > 800)) {
+                        batches.push(currentBatch);
+                        currentBatch = [];
+                        currentChars = 0;
+                    }
+                    currentBatch.push(u);
+                    currentChars += u.length;
+                }
+                if (currentBatch.length > 0) batches.push(currentBatch);
+
+                const totalBatches = batches.length;
+                setProgressState(prev => ({
+                    ...prev,
+                    stage: "native_translation",
+                    label: "Translating with ML Kit",
+                    detail: `Translating ${textUnits.length} paragraph units on-device`,
+                    progress: 0,
+                    overall_progress: 0,
+                    current_step: 0,
+                    total_steps: totalBatches,
+                    completed_chunks: 0,
+                    total_chunks: totalBatches,
+                    current_chunk: 0,
+                    visible: true,
+                    indeterminate: false,
+                }));
+
+                let fullResult = "";
+                const startTime = Date.now();
+
+                try {
+                    for (let i = 0; i < totalBatches; i++) {
+                        if (controller.signal.aborted || !isActiveRun()) {
+                            throw new DOMException("Translation cancelled.", "AbortError");
+                        }
+                        const batch = batches[i];
+                        const requestID = `android-mlkit-${Date.now()}-${i}`;
+
+                        const batchResults = await new Promise<string[]>((resolve, reject) => {
+                            const timeout = window.setTimeout(() => finish(new Error("ML Kit translation timed out")), 60000);
+                            const finish = (error?: Error, texts?: string[]) => {
+                                window.clearTimeout(timeout);
+                                window.removeEventListener("dkst-translation-result", onResult);
+                                controller.signal.removeEventListener("abort", onAbort);
+                                if (error) reject(error);
+                                else resolve(texts || []);
+                            };
+                            const onAbort = () => {
+                                try { bridge.cancel(requestID); } catch {}
+                                finish(new DOMException("Translation cancelled.", "AbortError"));
+                            };
+                            const onResult = (event: Event) => {
+                                const detail = (event as CustomEvent<any>).detail;
+                                if (detail?.requestID !== requestID) return;
+                                if (detail?.error) finish(new Error(detail.error));
+                                else if (Array.isArray(detail?.texts)) finish(undefined, detail.texts);
+                                else finish(new Error("ML Kit returned an invalid translation result"));
+                            };
+
+                            window.addEventListener("dkst-translation-result", onResult);
+                            controller.signal.addEventListener("abort", onAbort, { once: true });
+                            if (controller.signal.aborted) {
+                                onAbort();
+                                return;
+                            }
+
+                            try {
+                                bridge.translate(JSON.stringify({
+                                    sourceLanguage: sLang,
+                                    targetLanguage: tLang,
+                                    texts: batch,
+                                }), requestID);
+                            } catch (err) {
+                                finish(err instanceof Error ? err : new Error(String(err)));
+                            }
+                        });
+
+                        const batchTranslated = batchResults.join("\n\n");
+                        fullResult = fullResult ? fullResult + "\n\n" + batchTranslated : batchTranslated;
+
+                        setRenderedChunk(i, {
+                            displayedText: batchTranslated,
+                            draftText: batchTranslated,
+                            finalText: batchTranslated,
+                            phase: "final",
+                            showDraftSkeleton: false,
+                            skeletonHiding: false,
+                        });
+                        setTranslation(fullResult);
+                        smoothScrollTranslationToBottom();
+
+                        const completed = i + 1;
+                        setProgressState(prev => ({
+                            ...prev,
+                            stage: "native_translation",
+                            label: "Translating with ML Kit",
+                            detail: `Completed ${completed} / ${totalBatches} sections`,
+                            progress: completed / totalBatches,
+                            overall_progress: completed / totalBatches,
+                            current_step: completed,
+                            total_steps: totalBatches,
+                            completed_chunks: completed,
+                            total_chunks: totalBatches,
+                            current_chunk: completed,
+                            visible: true,
+                            indeterminate: false,
+                        }));
+                    }
+
+                    clearAllDraftSkeletons();
+                    setTranslation(fullResult);
+                    setTranslationCompletionID(v => v + 1);
+                    smoothScrollTranslationToBottom({ force: true });
+                    const elapsedSec = Math.max(0.1, (Date.now() - startTime) / 1000);
+                    const totalChars = fullResult.length;
+                    const charSpeed = Math.round(totalChars / elapsedSec);
+                    setStatusMessage(`Complete: ${totalChars} chars in ${elapsedSec.toFixed(1)}s (~${charSpeed} chars/s) via Google ML Kit`);
+                    setProgressState(prev => ({ ...prev, stage: "done", label: "Done", detail: "Translation complete", progress: 1, overall_progress: 1 }));
+                    setTimeout(() => setProgressState(prev => ({ ...prev, visible: false })), 500);
+                    return;
+                } finally {
+                    if (browserTranslateAbortRef.current === controller) {
+                        browserTranslateAbortRef.current = null;
+                    }
+                }
+            }
+
             if (isBrowserMode) {
                 browserTranslateAbortRef.current?.abort();
                 const controller = new AbortController();
@@ -3352,6 +3587,9 @@ function App() {
     const handleCancel = async () => {
         browserTranslateAbortRef.current?.abort();
         browserTranslateAbortRef.current = null;
+        try {
+            (window as any).dkstTranslation?.cancel("");
+        } catch {}
         setStatusMessage("Cancelling translation...");
         try {
             if (isBrowserMode) {
@@ -3444,7 +3682,12 @@ function App() {
                     announceAction("Clipboard is empty.");
                     return;
                 }
-                if (pdfDocument) resetTranslationPresentation();
+                if (pdfDocument) {
+                    resetTranslationPresentation();
+                    if (!isBrowserMode) {
+                        void ClearPDFCheckpoint();
+                    }
+                }
                 setSourceText(content);
                 setPDFDocument(null);
                 setTranslatedPDF(null);
@@ -3457,7 +3700,12 @@ function App() {
                 announceAction("Clipboard is empty.");
                 return;
             }
-            if (pdfDocument) resetTranslationPresentation();
+            if (pdfDocument) {
+                resetTranslationPresentation();
+                if (!isBrowserMode) {
+                    void ClearPDFCheckpoint();
+                }
+            }
             setSourceText(content);
             setPDFDocument(null);
             setTranslatedPDF(null);
@@ -3487,7 +3735,12 @@ function App() {
                     // Fallback to clear
                 }
             }
-            if (pdfDocument) resetTranslationPresentation();
+            if (pdfDocument) {
+                resetTranslationPresentation();
+                if (!isBrowserMode) {
+                    void ClearPDFCheckpoint();
+                }
+            }
             setSourceText("");
             setPDFDocument(null);
             setTranslatedPDF(null);
@@ -4973,8 +5226,8 @@ function App() {
                 )}
 
                 {showReviewNotesModal && (
-                    <div className="modal-overlay modal-overlay-centered" onClick={() => setShowReviewNotesModal(false)}>
-                        <div className="modal-card modal-card-wide review-notes-modal" onClick={e => e.stopPropagation()}>
+                    <div className={`modal-overlay ${isMobilePlatform ? "" : "modal-overlay-centered"}`} onClick={() => setShowReviewNotesModal(false)}>
+                        <div className={`modal-card modal-card-wide review-notes-modal ${isMobilePlatform ? "modal-card-fullscreen" : ""}`} onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
                                 <div>
                                     <div className="modal-title">Review Notes</div>

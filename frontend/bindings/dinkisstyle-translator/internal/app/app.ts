@@ -37,6 +37,10 @@ export function CancelTranslation(): $CancellablePromise<void> {
     return $Call.ByID(3232651519);
 }
 
+export function ClearPDFCheckpoint(): $CancellablePromise<void> {
+    return $Call.ByID(3416179157);
+}
+
 export function ConfirmClearSource(): $CancellablePromise<boolean> {
     return $Call.ByID(2743851642);
 }

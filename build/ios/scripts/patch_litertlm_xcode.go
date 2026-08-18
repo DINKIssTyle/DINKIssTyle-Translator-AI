@@ -41,6 +41,27 @@ func main() {
 		panic(err)
 	}
 
+	// Copy Assets.xcassets if present
+	assetsSrc := filepath.Join("build", "ios", "Assets.xcassets")
+	assetsDest := filepath.Join("build", "ios", "xcode", "main", "Assets.xcassets")
+	if srcInfo, err := os.Stat(assetsSrc); err == nil && srcInfo.IsDir() {
+		_ = filepath.Walk(assetsSrc, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(assetsSrc, path)
+			target := filepath.Join(assetsDest, rel)
+			if info.IsDir() {
+				return os.MkdirAll(target, 0o755)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(target, data, 0o644)
+		})
+	}
+
 	// Wails 3 currently emits CFBundleExecutable=wailsapp even though the
 	// generated Xcode target names its executable after PRODUCT_NAME. iOS then
 	// rejects the otherwise valid bundle as "missing its bundle executable".
@@ -52,6 +73,15 @@ func main() {
 	infoPlist = replaceOnce(infoPlist,
 		"<string>wailsapp</string>",
 		"<string>$(EXECUTABLE_NAME)</string>")
+	if !strings.Contains(infoPlist, "<key>CFBundleIconName</key>") {
+		closingDict := strings.LastIndex(infoPlist, "</dict>")
+		if closingDict >= 0 {
+			iconEntry := `    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+`
+			infoPlist = infoPlist[:closingDict] + iconEntry + infoPlist[closingDict:]
+		}
+	}
 	if !strings.Contains(infoPlist, "<key>UIFileSharingEnabled</key>") {
 		closingDict := strings.LastIndex(infoPlist, "</dict>")
 		if closingDict >= 0 {
@@ -101,17 +131,35 @@ func main() {
 	// PBXBuildFile section
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };",
-		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };\n\t\tC0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };\n\t\tC0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };\n\t\tC0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000212 /* TranslationBridge.swift */; };\n\t\tC0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };\n\t\tC0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };\n\t\tC0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };")
+		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };\n\t\tC0DEBEEF00000000000000F8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000108 /* Assets.xcassets */; };\n\t\tC0DEBEEF00000000000000F9 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000109 /* LaunchScreen.storyboard */; };\n\t\tC0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };\n\t\tC0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };\n\t\tC0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000212 /* TranslationBridge.swift */; };\n\t\tC0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };\n\t\tC0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };\n\t\tC0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };")
 
 	// PBXFileReference section
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };",
-		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };")
+		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };")
 
 	// Group children
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,",
-		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */,\n\t\t\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,")
+		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */,\n\t\t\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */,\n\t\t\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */,\n\t\t\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,")
+
+	// Resources build phase
+	resourcesSection := `/* Begin PBXResourcesBuildPhase section */
+		C0DEBEEF0000000000000057 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C0DEBEEF00000000000000F8 /* Assets.xcassets in Resources */,
+				C0DEBEEF00000000000000F9 /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */`
+	text = replaceOnce(text,
+		"/* Begin PBXShellScriptBuildPhase section */",
+		resourcesSection)
 
 	// Frameworks build phase
 	text = replaceOnce(text,
@@ -150,7 +198,7 @@ func main() {
 	// Target buildPhases
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000056 /* Frameworks */,\n\t\t\t);",
-		"C0DEBEEF0000000000000056 /* Frameworks */,\n\t\t\t\tC0DEBEEF0000000000000208 /* Embed & Sign Dynamic Frameworks */,\n\t\t\t);")
+		"C0DEBEEF0000000000000056 /* Frameworks */,\n\t\t\t\tC0DEBEEF0000000000000057 /* Resources */,\n\t\t\t\tC0DEBEEF0000000000000208 /* Embed & Sign Dynamic Frameworks */,\n\t\t\t);")
 
 	// SPM Package references
 	text = replaceOnce(text,
@@ -178,6 +226,7 @@ func main() {
 	text = strings.ReplaceAll(text,
 		"INFOPLIST_FILE = main/Info.plist;",
 		`INFOPLIST_FILE = main/Info.plist;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				ONLY_ACTIVE_ARCH = YES;

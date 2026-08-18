@@ -51,12 +51,30 @@ func TestPDFCheckpointManifestPreservesCompletedTranslation(t *testing.T) {
 }
 
 func TestPDFCheckpointRecoveryRequiresAbnormalExit(t *testing.T) {
-	manifest := pdfCheckpointManifest{CompletedPages: 3}
+	manifest := pdfCheckpointManifest{
+		PageCount:      5,
+		CompletedPages: 3,
+		Status:         "interrupted",
+	}
 	if !shouldRecoverPDFCheckpoint(manifest) {
-		t.Fatal("an abnormal exit checkpoint with completed pages should be recoverable")
+		t.Fatal("an abnormal exit checkpoint with incompleted pages should be recoverable")
 	}
 	manifest.CleanShutdown = true
 	if shouldRecoverPDFCheckpoint(manifest) {
 		t.Fatal("a checkpoint closed by normal app shutdown must not be restored")
+	}
+
+	// Completed status must not be recovered
+	manifest.CleanShutdown = false
+	manifest.Status = "completed"
+	if shouldRecoverPDFCheckpoint(manifest) {
+		t.Fatal("a completed translation must not be restored as a checkpoint")
+	}
+
+	// All pages completed must not be recovered
+	manifest.Status = "in_progress"
+	manifest.CompletedPages = 5
+	if shouldRecoverPDFCheckpoint(manifest) {
+		t.Fatal("a checkpoint with all pages completed must not be restored")
 	}
 }

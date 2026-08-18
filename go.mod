@@ -8,6 +8,7 @@ require (
 	github.com/signintech/gopdf v0.38.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/image v0.44.0
 )
 
 require (
@@ -27,7 +28,6 @@ require (
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/phpdave11/gofpdi v1.0.16 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f // indirect

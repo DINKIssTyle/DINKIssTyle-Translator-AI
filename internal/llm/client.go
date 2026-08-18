@@ -823,47 +823,167 @@ func nativeEngineName(mode string) string {
 	return mode
 }
 
+type nativeTextUnit struct {
+	text      string
+	separator string
+}
+
+func splitNativeUnits(source string) []nativeTextUnit {
+	normalized := strings.ReplaceAll(source, "\r\n", "\n")
+	paragraphs := strings.Split(normalized, "\n\n")
+	var units []nativeTextUnit
+
+	for _, para := range paragraphs {
+		paraTrimmed := strings.TrimSpace(para)
+		if paraTrimmed == "" {
+			continue
+		}
+
+		sep := "\n\n"
+		if len(units) == 0 {
+			sep = ""
+		}
+
+		paraRunes := []rune(paraTrimmed)
+		if len(paraRunes) > 500 {
+			sentences := splitSentences(paraTrimmed)
+			if len(sentences) > 1 {
+				for sIdx, s := range sentences {
+					sTrimmed := strings.TrimSpace(s)
+					if sTrimmed == "" {
+						continue
+					}
+					sSep := " "
+					if sIdx == 0 {
+						sSep = sep
+					}
+					units = append(units, nativeTextUnit{
+						text:      sTrimmed,
+						separator: sSep,
+					})
+				}
+				continue
+			}
+		}
+
+		units = append(units, nativeTextUnit{
+			text:      paraTrimmed,
+			separator: sep,
+		})
+	}
+
+	return units
+}
+
 func (h *translationHarness) runNative() (string, TranslationStatsPayload, error) {
+	units := splitNativeUnits(h.reqData.SourceText)
+	if len(units) == 0 {
+		return "", TranslationStatsPayload{}, nil
+	}
+
+	engine := nativeEngineName(h.reqData.Settings.Mode)
+	svc := translation.NewService()
+	totalUnits := len(units)
+
 	if h.mode.emitLifecycle {
 		h.client.emitProgress(
 			"native_translation",
 			"Translating with native engine",
-			"Translating text directly without post-editing or extra context passes",
+			fmt.Sprintf("Translating %d paragraph units with on-device engine", totalUnits),
 			nil,
 			true,
 		)
 	}
-	engine := nativeEngineName(h.reqData.Settings.Mode)
-	svc := translation.NewService()
-	texts := []string{h.reqData.SourceText}
 
+	// 텍스트 길이와 개수에 따라 가변 배치 묶음 생성
+	type nativeBatch struct {
+		startUnitIndex int
+		units          []nativeTextUnit
+	}
+	var batches []nativeBatch
+	currentBatch := nativeBatch{startUnitIndex: 0}
+	currentChars := 0
+
+	for i, u := range units {
+		uLen := len([]rune(u.text))
+		if len(currentBatch.units) > 0 && (len(currentBatch.units) >= 8 || currentChars+uLen > 800) {
+			batches = append(batches, currentBatch)
+			currentBatch = nativeBatch{startUnitIndex: i}
+			currentChars = 0
+		}
+		currentBatch.units = append(currentBatch.units, u)
+		currentChars += uLen
+	}
+	if len(currentBatch.units) > 0 {
+		batches = append(batches, currentBatch)
+	}
+
+	totalBatches := len(batches)
 	startTime := time.Now()
-	results, err := svc.Translate(translation.Request{
-		Engine:         engine,
-		Texts:          texts,
-		SourceLanguage: h.reqData.SourceLang,
-		TargetLanguage: h.reqData.TargetLang,
-	})
-	if err != nil {
-		return "", TranslationStatsPayload{}, err
-	}
-	if h.reqCtx.Err() != nil {
-		return "", TranslationStatsPayload{}, h.reqCtx.Err()
-	}
-	translated := ""
-	if len(results) > 0 {
-		translated = results[0]
-	}
-	elapsed := time.Since(startTime).Seconds()
+	var finalBuilder strings.Builder
+	chunkIndex := 0
 
-	chunkPayload := TranslationChunkPayload{
-		ChunkIndex:  0,
-		Phase:       "final",
-		Text:        translated,
-		FinalClosed: true,
+	for bIdx, batch := range batches {
+		if h.reqCtx.Err() != nil {
+			return "", TranslationStatsPayload{}, h.reqCtx.Err()
+		}
+
+		batchTexts := make([]string, len(batch.units))
+		for i, u := range batch.units {
+			batchTexts[i] = u.text
+		}
+
+		results, err := svc.Translate(translation.Request{
+			Engine:         engine,
+			Texts:          batchTexts,
+			SourceLanguage: h.reqData.SourceLang,
+			TargetLanguage: h.reqData.TargetLang,
+		})
+		if err != nil {
+			return "", TranslationStatsPayload{}, err
+		}
+		if h.reqCtx.Err() != nil {
+			return "", TranslationStatsPayload{}, h.reqCtx.Err()
+		}
+
+		var batchTranslatedBuilder strings.Builder
+		for i, u := range batch.units {
+			translatedPiece := u.text
+			if i < len(results) && results[i] != "" {
+				translatedPiece = results[i]
+			}
+			finalBuilder.WriteString(u.separator)
+			finalBuilder.WriteString(translatedPiece)
+
+			batchTranslatedBuilder.WriteString(u.separator)
+			batchTranslatedBuilder.WriteString(translatedPiece)
+		}
+
+		if h.mode.emitLifecycle {
+			chunkPayload := TranslationChunkPayload{
+				ChunkIndex:  chunkIndex,
+				Phase:       "final",
+				Text:        strings.TrimPrefix(batchTranslatedBuilder.String(), "\n\n"),
+				FinalClosed: true,
+			}
+			h.client.emitChunk(chunkPayload)
+			chunkIndex++
+
+			progressPercent := float64(bIdx+1) / float64(totalBatches)
+			h.client.emitProgress(
+				"native_translation",
+				fmt.Sprintf("Translating chunk %d/%d", bIdx+1, totalBatches),
+				fmt.Sprintf("Completed %d of %d chunks (%.0f%%)", bIdx+1, totalBatches, progressPercent*100),
+				&progressPercent,
+				true,
+			)
+		}
 	}
+
+	elapsed := time.Since(startTime).Seconds()
+	fullTranslated := finalBuilder.String()
+
 	if h.mode.emitLifecycle {
-		h.client.emitChunk(chunkPayload)
 		h.client.emitProgress(
 			"completed",
 			"Translation completed",
@@ -874,12 +994,12 @@ func (h *translationHarness) runNative() (string, TranslationStatsPayload, error
 	}
 	stats := TranslationStatsPayload{
 		TimeToFirstTokenSeconds: elapsed,
-		TotalOutputTokens:       len(strings.Fields(translated)),
+		TotalOutputTokens:       len(strings.Fields(fullTranslated)),
 	}
 	if h.mode.emitLifecycle {
 		h.client.emitStatsPayload(stats)
 	}
-	return translated, stats, nil
+	return fullTranslated, stats, nil
 }
 
 func (h *translationHarness) run() (string, TranslationStatsPayload, error) {

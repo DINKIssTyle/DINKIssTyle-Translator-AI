@@ -22,6 +22,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -33,6 +34,13 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
 
+import com.google.mlkit.nl.translate.TranslateLanguage;
+import com.google.mlkit.nl.translate.Translation;
+import com.google.mlkit.nl.translate.Translator;
+import com.google.mlkit.nl.translate.TranslatorOptions;
+import com.google.mlkit.common.model.DownloadConditions;
+
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -41,7 +49,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * MainActivity hosts the WebView and manages the Wails application lifecycle.
@@ -58,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private WailsBridge bridge;
     private LiteRTLMServer liteRTLMServer;
+    private TranslationBridge translationBridge;
     // Battery: system-event receivers are registered only while the activity is
     // in the foreground (onStart) and torn down in onStop, so background battery/
     // network/screen broadcasts don't wake the app.
@@ -205,6 +218,10 @@ public class MainActivity extends AppCompatActivity {
 
         // Add JavaScript interface for Go communication
         webView.addJavascriptInterface(new WailsJSBridge(bridge, webView), "wails");
+
+        // Translate article/document text with ML Kit models stored on the device
+        translationBridge = new TranslationBridge();
+        webView.addJavascriptInterface(translationBridge, "dkstTranslation");
     }
 
     private void loadApplication() {
@@ -809,6 +826,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (translationBridge != null) {
+            translationBridge.shutdown();
+            translationBridge = null;
+        }
         if (liteRTLMServer != null) {
             liteRTLMServer.close();
             liteRTLMServer = null;
@@ -819,6 +840,201 @@ public class MainActivity extends AppCompatActivity {
         }
         if (webView != null) {
             webView.destroy();
+        }
+    }
+
+    private void emitTranslationResult(String requestID, JSONArray texts, String error) {
+        try {
+            JSONObject detail = new JSONObject();
+            detail.put("requestID", requestID);
+            if (texts != null) detail.put("texts", texts);
+            if (error != null && !error.isEmpty()) detail.put("error", error);
+            runOnUiThread(() -> {
+                if (webView != null) {
+                    webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('dkst-translation-result',{detail:"
+                            + detail.toString() + "}));", null);
+                }
+            });
+        } catch (Exception exception) {
+            Log.e(TAG, "Unable to emit ML Kit translation result", exception);
+        }
+    }
+
+    private final class TranslationBridge {
+        private final Map<String, Translator> activeTranslators = new HashMap<>();
+        private final Map<String, Translator> translatorsByLanguagePair = new HashMap<>();
+        private final Set<String> readyLanguagePairs = new HashSet<>();
+
+        @JavascriptInterface
+        public String languages() {
+            return new JSONArray(TranslateLanguage.getAllLanguages()).toString();
+        }
+
+        @JavascriptInterface
+        public void cancel(String requestID) {
+            synchronized (activeTranslators) {
+                activeTranslators.remove(requestID);
+            }
+        }
+
+        @JavascriptInterface
+        public void translate(String requestJSON, String requestID) {
+            try {
+                JSONObject request = new JSONObject(requestJSON);
+                JSONArray sourceTexts = request.getJSONArray("texts");
+                String rawSource = request.optString("sourceLanguage", "").trim();
+                String source = null;
+                if (!rawSource.isEmpty() && !rawSource.equalsIgnoreCase("auto") && !rawSource.equalsIgnoreCase("und")) {
+                    source = TranslateLanguage.fromLanguageTag(rawSource);
+                }
+                if (source == null) {
+                    source = detectLanguage(sourceTexts);
+                }
+
+                String rawTarget = request.optString("targetLanguage", "").trim();
+                String target = TranslateLanguage.fromLanguageTag(rawTarget);
+                if (target == null && !rawTarget.isEmpty()) {
+                    target = TranslateLanguage.fromLanguageTag(rawTarget.toLowerCase());
+                }
+                if (target == null) {
+                    target = TranslateLanguage.KOREAN; // Fallback default
+                }
+                if (source == null) {
+                    source = TranslateLanguage.ENGLISH;
+                }
+
+                // If source and target are the same, return source texts directly
+                if (source.equals(target)) {
+                    emitTranslationResult(requestID, sourceTexts, null);
+                    return;
+                }
+
+                String languagePair = source + ">" + target;
+                Translator translator;
+                boolean modelReady;
+                synchronized (activeTranslators) {
+                    translator = translatorsByLanguagePair.get(languagePair);
+                    if (translator == null) {
+                        TranslatorOptions options = new TranslatorOptions.Builder()
+                                .setSourceLanguage(source)
+                                .setTargetLanguage(target)
+                                .build();
+                        translator = Translation.getClient(options);
+                        translatorsByLanguagePair.put(languagePair, translator);
+                    }
+                    activeTranslators.put(requestID, translator);
+                    modelReady = readyLanguagePairs.contains(languagePair);
+                }
+
+                if (modelReady) {
+                    translateNext(requestID, translator, sourceTexts, new JSONArray(), 0);
+                } else {
+                    final Translator selectedTranslator = translator;
+                    translator.downloadModelIfNeeded(new DownloadConditions.Builder().build())
+                            .addOnSuccessListener(ignored -> {
+                                synchronized (activeTranslators) {
+                                    if (translatorsByLanguagePair.get(languagePair) == selectedTranslator) {
+                                        readyLanguagePairs.add(languagePair);
+                                    }
+                                }
+                                translateNext(requestID, selectedTranslator, sourceTexts, new JSONArray(), 0);
+                            })
+                            .addOnFailureListener(error -> finishTranslation(
+                                    requestID, selectedTranslator, null, error.getLocalizedMessage()));
+                }
+            } catch (Exception error) {
+                emitTranslationResult(requestID, null, error.getLocalizedMessage());
+            }
+        }
+
+        private void translateNext(String requestID, Translator translator, JSONArray sourceTexts,
+                                   JSONArray results, int index) {
+            synchronized (activeTranslators) {
+                if (activeTranslators.get(requestID) != translator) return;
+            }
+            if (index >= sourceTexts.length()) {
+                finishTranslation(requestID, translator, results, null);
+                return;
+            }
+            String text = sourceTexts.optString(index, "");
+            translator.translate(text)
+                    .addOnSuccessListener(translated -> {
+                        results.put(translated);
+                        translateNext(requestID, translator, sourceTexts, results, index + 1);
+                    })
+                    .addOnFailureListener(error -> finishTranslation(
+                            requestID, translator, null, error.getLocalizedMessage()));
+        }
+
+        private void finishTranslation(String requestID, Translator translator,
+                                       JSONArray results, String error) {
+            synchronized (activeTranslators) {
+                if (activeTranslators.get(requestID) != translator) return;
+                activeTranslators.remove(requestID);
+            }
+            if (error != null && !error.isEmpty()) {
+                synchronized (activeTranslators) {
+                    String failedPair = null;
+                    for (Map.Entry<String, Translator> entry : translatorsByLanguagePair.entrySet()) {
+                        if (entry.getValue() == translator) {
+                            failedPair = entry.getKey();
+                            break;
+                        }
+                    }
+                    if (failedPair != null) {
+                        translatorsByLanguagePair.remove(failedPair);
+                        readyLanguagePairs.remove(failedPair);
+                    }
+                }
+                translator.close();
+            }
+            emitTranslationResult(requestID, results, error);
+        }
+
+        private String detectLanguage(JSONArray texts) {
+            if (texts == null || texts.length() == 0) return TranslateLanguage.ENGLISH;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < Math.min(texts.length(), 5); i++) {
+                sb.append(texts.optString(i, "")).append(" ");
+            }
+            String sample = sb.toString();
+            int korean = 0, japanese = 0, chinese = 0, cyrillic = 0, arabic = 0;
+            for (int i = 0; i < sample.length(); i++) {
+                char c = sample.charAt(i);
+                Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+                if (block == Character.UnicodeBlock.HANGUL_SYLLABLES ||
+                    block == Character.UnicodeBlock.HANGUL_JAMO ||
+                    block == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) {
+                    korean++;
+                } else if (block == Character.UnicodeBlock.HIRAGANA ||
+                           block == Character.UnicodeBlock.KATAKANA ||
+                           block == Character.UnicodeBlock.KATAKANA_PHONETIC_EXTENSIONS) {
+                    japanese++;
+                } else if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+                           block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A) {
+                    chinese++;
+                } else if (block == Character.UnicodeBlock.CYRILLIC ||
+                           block == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY) {
+                    cyrillic++;
+                } else if (block == Character.UnicodeBlock.ARABIC) {
+                    arabic++;
+                }
+            }
+            if (korean > 0 && korean >= japanese) return TranslateLanguage.KOREAN;
+            if (japanese > 0) return TranslateLanguage.JAPANESE;
+            if (chinese > 3 && korean == 0 && japanese == 0) return TranslateLanguage.CHINESE;
+            if (cyrillic > 3) return TranslateLanguage.RUSSIAN;
+            if (arabic > 3) return TranslateLanguage.ARABIC;
+            return TranslateLanguage.ENGLISH;
+        }
+
+        void shutdown() {
+            synchronized (activeTranslators) {
+                for (Translator translator : translatorsByLanguagePair.values()) translator.close();
+                activeTranslators.clear();
+                translatorsByLanguagePair.clear();
+                readyLanguagePairs.clear();
+            }
         }
     }
 

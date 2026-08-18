@@ -35,11 +35,32 @@ tasks:
       TASK_FORCE_YES: '{{if .YES}}true{{else}}false{{end}}'
     prompt: This will check and install Android development dependencies. Continue?
 
+  generate:android:icons:
+    summary: Generates Android mipmap icons from build/appicon.png
+    run: once
+    sources:
+      - build/appicon.png
+    generates:
+      - build/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+      - build/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+      - build/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+      - build/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+      - build/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+      - build/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+      - build/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+      - build/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+      - build/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+      - build/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+    cmds:
+      - go run build/android/scripts/generate_icons.go
+
+
   build:
     summary: Creates a debug build of the application for Android
     deps:
       - task: stage:litertlm:model
       - task: common:go:mod:tidy
+      - task: generate:android:icons
       - task: generate:android:overlay
       - task: common:build:frontend
         vars:
