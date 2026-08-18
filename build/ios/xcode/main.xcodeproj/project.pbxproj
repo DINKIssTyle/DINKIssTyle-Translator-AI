@@ -1,14 +1,13 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
-	objectVersion = 56;
+	classes = {
+	};
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };
-		C0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };
-		C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };
 		C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000101 /* UIKit.framework */; };
 		C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000102 /* Foundation.framework */; };
 		C0DEBEEF00000000000000F3 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000103 /* WebKit.framework */; };
@@ -16,11 +15,12 @@
 		C0DEBEEF00000000000000F5 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000105 /* CoreFoundation.framework */; };
 		C0DEBEEF00000000000000F6 /* libresolv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000106 /* libresolv.tbd */; };
 		C0DEBEEF00000000000000F7 /* DKST Translator AI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000107 /* DKST Translator AI.a */; };
+		C0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };
+		C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000004 /* DKST Translator AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "DKST Translator AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DEBEEF0000000000000101 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
@@ -28,9 +28,28 @@
 		C0DEBEEF0000000000000103 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000104 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000105 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
-		C0DEBEEF0000000000000106 /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.text-based-dylib-definition; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
+		C0DEBEEF0000000000000106 /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000107 /* DKST Translator AI.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = "DKST Translator AI.a"; path = "../../../bin/DKST Translator AI.a"; sourceTree = SOURCE_ROOT; };
+		C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C0DEBEEF0000000000000056 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C0DEBEEF00000000000000F7 /* DKST Translator AI.a in Frameworks */,
+				C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */,
+				C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */,
+				C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */,
+				C0DEBEEF00000000000000F3 /* WebKit.framework in Frameworks */,
+				C0DEBEEF00000000000000F4 /* Security.framework in Frameworks */,
+				C0DEBEEF00000000000000F5 /* CoreFoundation.framework in Frameworks */,
+				C0DEBEEF00000000000000F6 /* libresolv.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		C0DEBEEF0000000000000010 = {
@@ -90,10 +109,10 @@
 			dependencies = (
 			);
 			name = "DKST Translator AI";
-			productName = "DKST Translator AI";
 			packageProductDependencies = (
 				C0DEBEEF0000000000000204 /* LiteRTLMNative */,
 			);
+			productName = "DKST Translator AI";
 			productReference = C0DEBEEF0000000000000004 /* DKST Translator AI.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -104,7 +123,7 @@
 			isa = PBXProject;
 			attributes = {
 				LastUpgradeCheck = 1500;
-				ORGANIZATIONNAME = "DINKIssTyle";
+				ORGANIZATIONNAME = DINKIssTyle;
 				TargetAttributes = {
 					C0DEBEEF0000000000000040 = {
 						CreatedOnToolsVersion = 15.0;
@@ -119,35 +138,17 @@
 				en,
 			);
 			mainGroup = C0DEBEEF0000000000000010;
+			packageReferences = (
+				C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference "../LiteRTLMNative" */,
+			);
 			productRefGroup = C0DEBEEF0000000000000020 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			packageReferences = (
-				C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference LiteRTLMNative */,
-			);
 			targets = (
 				C0DEBEEF0000000000000040 /* DKST Translator AI */,
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXFrameworksBuildPhase section */
-		C0DEBEEF0000000000000056 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				C0DEBEEF00000000000000F7 /* DKST Translator AI.a in Frameworks */,
-				C0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */,
-				C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */,
-				C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */,
-				C0DEBEEF00000000000000F3 /* WebKit.framework in Frameworks */,
-				C0DEBEEF00000000000000F4 /* Security.framework in Frameworks */,
-				C0DEBEEF00000000000000F5 /* CoreFoundation.framework in Frameworks */,
-				C0DEBEEF00000000000000F6 /* libresolv.tbd in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		C0DEBEEF0000000000000055 /* Prebuild: Wails Go Archive */ = {
@@ -182,60 +183,54 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference LiteRTLMNative */ = {isa = XCLocalSwiftPackageReference; relativePath = ../LiteRTLMNative; };
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		C0DEBEEF0000000000000204 /* LiteRTLMNative */ = {isa = XCSwiftPackageProductDependency; package = C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference LiteRTLMNative */; productName = LiteRTLMNative; };
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCBuildConfiguration section */
 		C0DEBEEF0000000000000090 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = main/Info.plist;
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QQ3GJ5KGP2;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				INFOPLIST_FILE = main/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				SWIFT_VERSION = 5.0;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.dinkisstyle.translatorai";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dinkisstyle.translatorai;
 				PRODUCT_NAME = "DKST Translator AI";
-				CODE_SIGN_STYLE = Automatic;
-				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
 		C0DEBEEF00000000000000A0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = main/Info.plist;
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QQ3GJ5KGP2;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				INFOPLIST_FILE = main/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				SWIFT_VERSION = 5.0;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.dinkisstyle.translatorai";
+				PRODUCT_BUNDLE_IDENTIFIER = com.dinkisstyle.translatorai;
 				PRODUCT_NAME = "DKST Translator AI";
-				CODE_SIGN_STYLE = Automatic;
-				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -261,6 +256,21 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference "../LiteRTLMNative" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../LiteRTLMNative;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C0DEBEEF0000000000000204 /* LiteRTLMNative */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference "../LiteRTLMNative" */;
+			productName = LiteRTLMNative;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C0DEBEEF0000000000000060 /* Project object */;
 }

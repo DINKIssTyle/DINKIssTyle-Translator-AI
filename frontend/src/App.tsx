@@ -95,6 +95,18 @@ export type ThemeMode = "auto" | "light" | "dark";
 
 type ProviderMode = "lmstudio" | "openai" | "litertlm";
 
+type ProviderProfile = {
+    endpoint: string;
+    apiKey: string;
+    model: string;
+    reasoning: string;
+    temperature: number;
+    liteRTModelPath?: string;
+    liteRTRuntimePath?: string;
+    liteRTRuntimeMode?: "ondevice" | "server";
+    liteRTPort?: number;
+};
+
 type ProviderSettings = {
     mode: ProviderMode;
     endpoint: string;
@@ -254,6 +266,34 @@ const MAX_EDITOR_FONT_SIZE = 26;
 const DEFAULT_REASONING = "";
 const DEFAULT_TEMPERATURE = 0;
 const MIN_TEMPERATURE = 0;
+
+const DEFAULT_PROVIDER_PROFILES: Record<ProviderMode, ProviderProfile> = {
+    lmstudio: {
+        endpoint: "http://127.0.0.1:1234",
+        apiKey: "",
+        model: "",
+        reasoning: "",
+        temperature: DEFAULT_TEMPERATURE,
+    },
+    openai: {
+        endpoint: "https://api.openai.com/v1",
+        apiKey: "",
+        model: "",
+        reasoning: "",
+        temperature: DEFAULT_TEMPERATURE,
+    },
+    litertlm: {
+        endpoint: "http://127.0.0.1:9379",
+        apiKey: "",
+        model: "",
+        reasoning: "",
+        temperature: DEFAULT_TEMPERATURE,
+        liteRTPort: 9379,
+        liteRTRuntimeMode: "ondevice",
+        liteRTModelPath: "",
+        liteRTRuntimePath: "",
+    },
+};
 const GLOSSARY_STOPWORDS = new Set([
     "the", "and", "that", "with", "from", "this", "have", "were", "their", "there", "into", "they",
     "them", "then", "than", "when", "where", "what", "which", "will", "would", "could", "should",
@@ -1033,8 +1073,38 @@ function persistSettings(
     targetLang: string,
     showDebugPanel: boolean,
     instruction?: string,
-    theme?: ThemeMode
+    theme?: ThemeMode,
+    providerProfiles?: Record<ProviderMode, ProviderProfile>
 ) {
+    let existingProfiles: Record<string, unknown> = {};
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.providerProfiles === "object") {
+                existingProfiles = parsed.providerProfiles;
+            }
+        }
+    } catch {
+        // ignore parse error
+    }
+
+    const currentProfiles = {
+        ...existingProfiles,
+        ...(providerProfiles || {}),
+        [providerSettings.mode]: {
+            endpoint: providerSettings.endpoint,
+            apiKey: providerSettings.apiKey,
+            model: selectedModel || providerSettings.model,
+            reasoning: providerSettings.reasoning,
+            temperature: providerSettings.temperature,
+            liteRTModelPath: providerSettings.liteRTModelPath,
+            liteRTRuntimePath: providerSettings.liteRTRuntimePath,
+            liteRTRuntimeMode: providerSettings.liteRTRuntimeMode,
+            liteRTPort: providerSettings.liteRTPort,
+        },
+    };
+
     const nextSettings: Record<string, unknown> = {
         selectedModel,
         providerMode: providerSettings.mode,
@@ -1060,6 +1130,7 @@ function persistSettings(
         targetLang,
         showDebugPanel,
         theme,
+        providerProfiles: currentProfiles,
     };
 
     if (typeof instruction === "string") {
@@ -1219,6 +1290,49 @@ function App() {
         liteRTRuntimePath: storedSettings?.liteRTRuntimePath || "",
         liteRTRuntimeMode: storedSettings?.liteRTRuntimeMode === "server" ? "server" : "ondevice",
         liteRTPort: Number(storedSettings?.liteRTPort) || 9379,
+    });
+    const [providerProfiles, setProviderProfiles] = useState<Record<ProviderMode, ProviderProfile>>(() => {
+        const raw = storedSettings?.providerProfiles;
+        const initialMode = (storedSettings?.providerMode || "lmstudio") as ProviderMode;
+        return {
+            lmstudio: {
+                ...DEFAULT_PROVIDER_PROFILES.lmstudio,
+                ...(raw?.lmstudio || {}),
+                ...(initialMode === "lmstudio" ? {
+                    endpoint: storedSettings?.endpoint || DEFAULT_PROVIDER_PROFILES.lmstudio.endpoint,
+                    apiKey: storedSettings?.apiKey || "",
+                    model: storedSettings?.selectedModel || "",
+                    reasoning: storedSettings?.reasoning ?? "",
+                    temperature: clampTemperature(storedSettings?.temperature ?? DEFAULT_TEMPERATURE),
+                } : {}),
+            },
+            openai: {
+                ...DEFAULT_PROVIDER_PROFILES.openai,
+                ...(raw?.openai || {}),
+                ...(initialMode === "openai" ? {
+                    endpoint: storedSettings?.endpoint || DEFAULT_PROVIDER_PROFILES.openai.endpoint,
+                    apiKey: storedSettings?.apiKey || "",
+                    model: storedSettings?.selectedModel || "",
+                    reasoning: storedSettings?.reasoning ?? "",
+                    temperature: clampTemperature(storedSettings?.temperature ?? DEFAULT_TEMPERATURE),
+                } : {}),
+            },
+            litertlm: {
+                ...DEFAULT_PROVIDER_PROFILES.litertlm,
+                ...(raw?.litertlm || {}),
+                ...(initialMode === "litertlm" ? {
+                    endpoint: storedSettings?.endpoint || DEFAULT_PROVIDER_PROFILES.litertlm.endpoint,
+                    apiKey: storedSettings?.apiKey || "",
+                    model: storedSettings?.selectedModel || "",
+                    reasoning: storedSettings?.reasoning ?? "",
+                    temperature: clampTemperature(storedSettings?.temperature ?? DEFAULT_TEMPERATURE),
+                    liteRTModelPath: storedSettings?.liteRTModelPath || "",
+                    liteRTRuntimePath: storedSettings?.liteRTRuntimePath || "",
+                    liteRTRuntimeMode: storedSettings?.liteRTRuntimeMode === "server" ? "server" : "ondevice",
+                    liteRTPort: Number(storedSettings?.liteRTPort) || 9379,
+                } : {}),
+            },
+        };
     });
     const [fastTranslationEnabled, setFastTranslationEnabled] = useState<boolean>(Boolean(storedSettings?.fastTranslationEnabled));
     const [sourceLang, setSourceLang] = useState(storedSettings?.sourceLang || "auto");
@@ -2651,7 +2765,8 @@ function App() {
             targetLang,
             showDebugPanel,
             undefined,
-            themeMode
+            themeMode,
+            providerProfiles
         );
 
         if (!didHydrateSettingsRef.current) {
@@ -2950,7 +3065,8 @@ function App() {
                 targetLang,
                 showDebugPanel,
                 instruction,
-                themeMode
+                themeMode,
+                providerProfiles
             );
             setStatusMessage("Reasoning unsupported. Retrying with Auto.");
             await runTranslation(fallbackSettings);
@@ -2988,7 +3104,8 @@ function App() {
             targetLang,
             showDebugPanel,
             instruction,
-            themeMode
+            themeMode,
+            providerProfiles
         );
         setTranslation("");
         latestStatsRef.current = null;
@@ -3466,6 +3583,65 @@ function App() {
         } catch (err: any) {
             setSettingsStatus(`Could not select LiteRT-LM model: ${String(err)}`);
         }
+    };
+
+    const handleSwitchProviderMode = (newMode: ProviderMode) => {
+        if (newMode === providerSettings.mode) {
+            return;
+        }
+
+        const currentMode = providerSettings.mode;
+        const currentSnapshot: ProviderProfile = {
+            endpoint: providerSettings.endpoint,
+            apiKey: providerSettings.apiKey,
+            model: providerSettings.model,
+            reasoning: providerSettings.reasoning,
+            temperature: providerSettings.temperature,
+            liteRTModelPath: providerSettings.liteRTModelPath,
+            liteRTRuntimePath: providerSettings.liteRTRuntimePath,
+            liteRTRuntimeMode: providerSettings.liteRTRuntimeMode,
+            liteRTPort: providerSettings.liteRTPort,
+        };
+
+        const targetProfile = providerProfiles[newMode] || DEFAULT_PROVIDER_PROFILES[newMode];
+        const updatedProfiles: Record<ProviderMode, ProviderProfile> = {
+            ...providerProfiles,
+            [currentMode]: currentSnapshot,
+        };
+
+        setProviderProfiles(updatedProfiles);
+        setModels([]);
+
+        const nextSettings: ProviderSettings = {
+            ...providerSettings,
+            mode: newMode,
+            endpoint: newMode === "litertlm"
+                ? `http://127.0.0.1:${targetProfile.liteRTPort || 9379}`
+                : (targetProfile.endpoint || DEFAULT_PROVIDER_PROFILES[newMode].endpoint),
+            apiKey: targetProfile.apiKey ?? "",
+            model: targetProfile.model ?? "",
+            reasoning: targetProfile.reasoning ?? "",
+            temperature: clampTemperature(targetProfile.temperature ?? DEFAULT_TEMPERATURE),
+            liteRTModelPath: targetProfile.liteRTModelPath ?? "",
+            liteRTRuntimePath: targetProfile.liteRTRuntimePath ?? "",
+            liteRTRuntimeMode: (targetProfile.liteRTRuntimeMode === "server" && !isMobilePlatform) ? "server" : "ondevice",
+            liteRTPort: targetProfile.liteRTPort || 9379,
+        };
+
+        setProviderSettings(nextSettings);
+
+        persistSettings(
+            nextSettings.model,
+            nextSettings,
+            fastTranslationEnabled,
+            editorFontSize,
+            sourceLang,
+            targetLang,
+            showDebugPanel,
+            instruction,
+            themeMode,
+            updatedProfiles
+        );
     };
 
     const handleCloseEnhancedContextModal = () => {
@@ -4585,19 +4761,10 @@ function App() {
                                             <div className="settings-grid">
                                                 <label className="settings-field">
                                                     <span>Mode</span>
-                                                    <select value={providerSettings.mode} onChange={e => {
-                                                        const mode = e.target.value as ProviderMode;
-                                                        setModels([]);
-                                                        setProviderSettings(prev => ({
-                                                            ...prev,
-                                                            mode,
-                                                            endpoint: mode === "litertlm"
-                                                                ? `http://127.0.0.1:${prev.liteRTPort || 9379}`
-                                                                : prev.endpoint,
-                                                            model: "",
-                                                            reasoning: mode === "litertlm" ? "" : prev.reasoning,
-                                                        }));
-                                                    }}>
+                                                    <select
+                                                        value={providerSettings.mode}
+                                                        onChange={e => handleSwitchProviderMode(e.target.value as ProviderMode)}
+                                                    >
                                                         <option value="lmstudio">LM Studio</option>
                                                         <option value="openai">OpenAI</option>
                                                         <option value="litertlm">LiteRT-LM (On-device)</option>
