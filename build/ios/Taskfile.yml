@@ -286,9 +286,22 @@ tasks:
     cmds:
       - wails3 ios overlay:gen -out build/ios/xcode/overlay.json -config build/config.yml
 
+  generate:ios:icons:
+    summary: Generates iOS asset catalog icons from build/appicon.png
+    run: once
+    sources:
+      - build/appicon.png
+    generates:
+      - build/ios/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+      - build/ios/Assets.xcassets/AppIcon.appiconset/Contents.json
+    cmds:
+      - go run build/ios/scripts/generate_icons.go
+
   generate:ios:xcode:
     internal: true
     summary: Generate iOS Xcode project structure and assets
+    deps:
+      - task: generate:ios:icons
     sources:
       - build/config.yml
       - build/appicon.png
@@ -298,6 +311,7 @@ tasks:
       - build/ios/xcode/project.pbxproj
     cmds:
       - wails3 ios xcode:gen -outdir build/ios/xcode -config build/config.yml
+      - go run build/ios/scripts/generate_icons.go
       - go run build/ios/scripts/patch_litertlm_xcode.go
       - pod install --project-directory=build/ios
 
