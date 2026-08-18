@@ -11,6 +11,11 @@ APP_DIR="${APP_NAME}.AppDir"
 # Create AppDir structure
 mkdir -p "${APP_DIR}/usr/bin"
 cp -r "${APP_BINARY}" "${APP_DIR}/usr/bin/"
+RUNTIME_DIR="../../../third_party/litertlm/linux-${GOARCH:-amd64}"
+if [[ -d "$RUNTIME_DIR" ]]; then
+    mkdir -p "${APP_DIR}/usr/bin/litertlm/linux-${GOARCH:-amd64}"
+    cp -R "$RUNTIME_DIR"/. "${APP_DIR}/usr/bin/litertlm/linux-${GOARCH:-amd64}/"
+fi
 cp "${ICON_PATH}" "${APP_DIR}/"
 cp "${DESKTOP_FILE}" "${APP_DIR}/"
 

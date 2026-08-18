@@ -167,6 +167,16 @@ tasks:
         fi
       - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
       - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
+      - |
+        if [ -d third_party/litertlm ]; then
+          cp -R third_party/litertlm "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/"
+        fi
+        if [ -n "${LITERTLM_MODEL_PATH:-}" ]; then
+          case "$LITERTLM_MODEL_PATH" in
+            *.litertlm) mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/models"; cp "$LITERTLM_MODEL_PATH" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/models/gemma-2b-it.litertlm" ;;
+            *) echo "LITERTLM_MODEL_PATH must point to a .litertlm file"; exit 1 ;;
+          esac
+        fi
       - task: '{{if eq OS "darwin"}}codesign:adhoc{{else}}codesign:skip{{end}}'
 
   codesign:adhoc:
@@ -192,6 +202,16 @@ tasks:
         fi
       - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/MacOS"
       - cp "build/darwin/Info.dev.plist" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Info.plist"
+      - |
+        if [ -d third_party/litertlm ]; then
+          cp -R third_party/litertlm "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources/"
+        fi
+        if [ -n "${LITERTLM_MODEL_PATH:-}" ]; then
+          case "$LITERTLM_MODEL_PATH" in
+            *.litertlm) mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources/models"; cp "$LITERTLM_MODEL_PATH" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/Resources/models/gemma-2b-it.litertlm" ;;
+            *) echo "LITERTLM_MODEL_PATH must point to a .litertlm file"; exit 1 ;;
+          esac
+        fi
       - codesign --force --deep --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
       - '"{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Contents/MacOS/{{.APP_NAME}}"'
 

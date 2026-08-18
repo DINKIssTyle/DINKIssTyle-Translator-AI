@@ -32,6 +32,7 @@ Mobile Screen
 - **Context-Aware Smart Post-Editing**: Intelligently preserves context across different segments of long documents to prevent drift in tone or meaning.
 - **Layout-Preserving PDF Translation**: Open text-based PDFs in the desktop app, preview source and translated pages side by side, translate coordinate-aware heading/body/caption blocks in contextual chunks, and keep the original pages, images, columns, and page count in the saved PDF.
 - **Integrated Web Server**: Access the translation workspace via a browser. Supports custom port configuration, password protection, and SSL/TLS certificates for secure remote access.
+- **On-device LiteRT-LM**: Run a `.litertlm` Gemma model locally on Windows, macOS, Linux, Android, and iOS, with an optional OpenAI-compatible server mode. See [LiteRT-LM integration](docs/LITERT_LM.md).
 
 > PDF translation currently requires selectable text. Image-only/scanned PDFs must be OCR-processed first. The clean-room renderer removes page-level text objects before recomposition and uses opaque local patches only as a compatibility fallback. See [PDF engine architecture](docs/PDF_ENGINE.md).
 
@@ -50,6 +51,7 @@ Mobile Screen
 - **문맥 인지 스마트 포스트 에디팅**: 장문의 문서 전체에서 문맥을 지능적으로 파악하여 일관된 톤과 의미를 유지하도록 돕습니다.
 - **레이아웃 보존 PDF 번역**: 데스크톱 앱에서 텍스트 기반 PDF를 열고 원문·번역 PDF를 나란히 미리보며, 제목·본문·캡션 좌표 블록을 문맥 청크로 번역하고 원본 페이지·이미지·단·페이지 수를 유지한 PDF를 저장할 수 있습니다.
 - **내장 웹 서버 지원**: 웹 브라우저를 통해 원격으로 접속하여 사용할 수 있습니다. 포트 설정, 접근 비밀번호 및 SSL/TLS 인증서 기능을 지원하여 안전한 접속 환경을 제공합니다.
+- **온디바이스 LiteRT-LM**: Windows, macOS, Linux, Android, iOS에서 `.litertlm` Gemma 모델을 로컬로 실행하고 필요하면 OpenAI 호환 서버로 제공할 수 있습니다. 자세한 내용은 [LiteRT-LM 통합 문서](docs/LITERT_LM.md)를 참고하세요.
 
 > 현재 PDF 번역은 선택 가능한 텍스트가 있는 문서를 대상으로 합니다. 스캔 이미지 PDF는 먼저 OCR 처리가 필요합니다. 클린룸 렌더러는 재조판 전에 페이지 텍스트 객체를 제거하며, 호환되지 않는 PDF에만 불투명 영역 교체를 폴백으로 사용합니다. 자세한 내용은 [PDF 엔진 구조](docs/PDF_ENGINE.md)를 참고하세요.
 

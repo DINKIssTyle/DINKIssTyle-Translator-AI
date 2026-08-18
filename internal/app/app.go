@@ -6,10 +6,12 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"dinkisstyle-translator/internal/file"
+	"dinkisstyle-translator/internal/litertlm"
 	"dinkisstyle-translator/internal/llm"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -20,6 +22,7 @@ type App struct {
 	mode              string
 	assets            fs.FS
 	llm               *llm.Client
+	liteRT            *litertlm.Manager
 	webLLM            *llm.Client
 	file              *file.FileHandler
 	hostSettings      llm.ProviderSettings
@@ -42,6 +45,7 @@ func NewApp(mode string, assets fs.FS, wailsApp *application.App) *App {
 		mode:              mode,
 		assets:            assets,
 		llm:               llm.NewClient(),
+		liteRT:            litertlm.NewManager(),
 		webLLM:            llm.NewClient(),
 		file:              file.NewFileHandler(wailsApp),
 		hostSettings:      loadPersistedHostProviderSettings(),
@@ -62,6 +66,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 
 func (a *App) ServiceShutdown() error {
 	a.llm.CancelTranslation()
+	_ = a.liteRT.Close()
 	a.pdfRunMu.Lock()
 	a.pdfRunMu.Unlock()
 	a.markPDFCheckpointCleanShutdown()
@@ -74,6 +79,11 @@ func (a *App) ServiceShutdown() error {
 
 // GetModels returns the list of models from the configured provider endpoint.
 func (a *App) GetModels(settings llm.ProviderSettings) ([]llm.ModelInfo, error) {
+	var err error
+	settings, err = a.prepareProviderSettings(settings)
+	if err != nil {
+		return nil, err
+	}
 	return a.llm.ListModels(settings)
 }
 
@@ -88,10 +98,45 @@ func (a *App) SaveHostProviderSettings(settings llm.ProviderSettings) error {
 
 // Translate performs the translation via the configured provider.
 func (a *App) Translate(req llm.TranslationRequest) error {
+	var err error
+	req.Settings, err = a.prepareProviderSettings(req.Settings)
+	if err != nil {
+		return err
+	}
 	if req.DocumentType == "pdf" {
 		return a.translatePDF(req)
 	}
 	return a.llm.Translate(req)
+}
+
+func (a *App) prepareProviderSettings(settings llm.ProviderSettings) (llm.ProviderSettings, error) {
+	if !strings.EqualFold(settings.Mode, "litertlm") {
+		return settings, nil
+	}
+	endpoint, modelID, err := a.liteRT.Ensure(context.Background(), litertlm.Config{
+		ModelPath:   settings.LiteRTModelPath,
+		RuntimePath: settings.LiteRTRuntimePath,
+		RuntimeMode: settings.LiteRTRuntimeMode,
+		Port:        settings.LiteRTPort,
+	})
+	if err != nil {
+		return settings, err
+	}
+	settings.Endpoint = endpoint
+	if strings.TrimSpace(settings.Model) == "" {
+		settings.Model = modelID
+	}
+	return settings, nil
+}
+
+func (a *App) SelectLiteRTLMModel() (string, error) {
+	return a.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title: "Select LiteRT-LM Model",
+		Filters: []application.FileFilter{
+			{DisplayName: "LiteRT-LM Models (*.litertlm)", Pattern: "*.litertlm"},
+			{DisplayName: "Legacy AI Edge Models (*.bin)", Pattern: "*.bin"},
+		},
+	}).PromptForSingleSelection()
 }
 
 // CancelTranslation aborts the active translation request, if any.

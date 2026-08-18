@@ -124,6 +124,10 @@ export function SaveWebServerSettings(input: $models.WebServerSettingsInput): $C
     });
 }
 
+export function SelectLiteRTLMModel(): $CancellablePromise<string> {
+    return $Call.ByID(3861202836);
+}
+
 /**
  * Translate performs the translation via the configured provider.
  */

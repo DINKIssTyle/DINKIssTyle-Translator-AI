@@ -12,6 +12,8 @@ includes:
   windows: ./build/windows/Taskfile.yml
   darwin: ./build/darwin/Taskfile.yml
   linux: ./build/linux/Taskfile.yml
+  ios: ./build/ios/Taskfile.yml
+  android: ./build/android/Taskfile.yml
 
 tasks:
   build:
@@ -31,10 +33,17 @@ tasks:
 
   dev:
     summary: Runs the application in development mode
+    deps:
+      - task: common:generate:bindings
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+      - node ./scripts/run-wails-dev.mjs {{.VITE_PORT}}
 
   setup:docker:
     summary: Builds the Wails cross-compilation image
     cmds:
       - task: common:setup:docker
+
+  litertlm:bundle:
+    summary: Bundles the official LiteRT-LM 0.14.0 desktop runtime for the current OS
+    cmds:
+      - '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File scripts/build-litertlm-runtime.ps1{{else}}./scripts/build-litertlm-runtime.sh{{end}}'

@@ -2,6 +2,7 @@
 *_test.go
 !internal/app/pdfcheckpoint_test.go
 !internal/llm/pdf_page_progress_test.go
+!internal/litertlm/manager_test.go
 test.go
 test_*.go
 *.test
@@ -19,6 +20,18 @@ bin/
 *.dll
 *.so
 *.dylib
+third_party/litertlm/*/litert-lm
+third_party/litertlm/*/litert-lm.exe
+build/litertlm-runtime/
+build/**/models/*.litertlm
+build/**/assets/models/*.litertlm
+build/android/.gradle/
+build/android/.kotlin/
+build/android/build/
+build/android/app/build/
+build/ios/xcode/DerivedData/
+build/android/overlay.json
+build/ios/xcode/overlay.json
 *.app
 
 # Node / Frontend Build & Caches

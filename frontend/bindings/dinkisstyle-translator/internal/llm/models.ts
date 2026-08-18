@@ -53,6 +53,10 @@ export class ProviderSettings {
     "smartChunkSize"?: number;
     "debugTranslationPromptTemplate"?: string;
     "debugPostEditPromptTemplate"?: string;
+    "liteRTModelPath"?: string;
+    "liteRTRuntimePath"?: string;
+    "liteRTRuntimeMode"?: string;
+    "liteRTPort"?: number;
 
     /** Creates a new ProviderSettings instance. */
     constructor($$source: Partial<ProviderSettings> = {}) {

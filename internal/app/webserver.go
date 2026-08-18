@@ -697,6 +697,11 @@ func (a *App) handleWebModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := a.hostSettings
+	settings, err := a.prepareProviderSettings(settings)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 	models, err := a.llm.ListModels(settings)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -719,8 +724,18 @@ func (a *App) handleWebTranslate(w http.ResponseWriter, r *http.Request) {
 	req.Settings.Mode = hostSettings.Mode
 	req.Settings.Endpoint = hostSettings.Endpoint
 	req.Settings.APIKey = hostSettings.APIKey
+	req.Settings.LiteRTModelPath = hostSettings.LiteRTModelPath
+	req.Settings.LiteRTRuntimePath = hostSettings.LiteRTRuntimePath
+	req.Settings.LiteRTRuntimeMode = hostSettings.LiteRTRuntimeMode
+	req.Settings.LiteRTPort = hostSettings.LiteRTPort
 	if strings.TrimSpace(req.Settings.Model) == "" {
 		req.Settings.Model = hostSettings.Model
+	}
+	var err error
+	req.Settings, err = a.prepareProviderSettings(req.Settings)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
 	}
 	text, stats, err := a.webLLM.TranslateText(req)
 	if err != nil {
@@ -753,8 +768,18 @@ func (a *App) handleWebTranslateStream(w http.ResponseWriter, r *http.Request) {
 	req.Settings.Mode = hostSettings.Mode
 	req.Settings.Endpoint = hostSettings.Endpoint
 	req.Settings.APIKey = hostSettings.APIKey
+	req.Settings.LiteRTModelPath = hostSettings.LiteRTModelPath
+	req.Settings.LiteRTRuntimePath = hostSettings.LiteRTRuntimePath
+	req.Settings.LiteRTRuntimeMode = hostSettings.LiteRTRuntimeMode
+	req.Settings.LiteRTPort = hostSettings.LiteRTPort
 	if strings.TrimSpace(req.Settings.Model) == "" {
 		req.Settings.Model = hostSettings.Model
+	}
+	var err error
+	req.Settings, err = a.prepareProviderSettings(req.Settings)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

@@ -90,6 +90,13 @@ Section
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
+    !ifdef SUPPORTS_AMD64
+      !if /FileExists "${__FILEDIR__}\..\..\..\third_party\litertlm\windows-amd64\litert-lm.exe"
+        SetOutPath "$INSTDIR\litertlm\windows-amd64"
+        File "${__FILEDIR__}\..\..\..\third_party\litertlm\windows-amd64\litert-lm.exe"
+        SetOutPath $INSTDIR
+      !endif
+    !endif
     
     !insertmacro wails.files
 

@@ -130,6 +130,10 @@ type ProviderSettings struct {
 	SmartChunkSize                   int     `json:"smartChunkSize,omitempty"`
 	DebugTranslationPromptTemplate   string  `json:"debugTranslationPromptTemplate,omitempty"`
 	DebugPostEditPromptTemplate      string  `json:"debugPostEditPromptTemplate,omitempty"`
+	LiteRTModelPath                  string  `json:"liteRTModelPath,omitempty"`
+	LiteRTRuntimePath                string  `json:"liteRTRuntimePath,omitempty"`
+	LiteRTRuntimeMode                string  `json:"liteRTRuntimeMode,omitempty"`
+	LiteRTPort                       int     `json:"liteRTPort,omitempty"`
 }
 
 type TranslationRequest struct {

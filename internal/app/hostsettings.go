@@ -26,6 +26,8 @@ func defaultHostProviderSettings() llm.ProviderSettings {
 		EnableEnhancedContextTranslation: false,
 		EnableSmartChunking:              true,
 		SmartChunkSize:                   1000,
+		LiteRTRuntimeMode:                "ondevice",
+		LiteRTPort:                       9379,
 	}
 }
 
@@ -51,6 +53,12 @@ func loadPersistedHostProviderSettings() llm.ProviderSettings {
 	if settings.SmartChunkSize <= 0 {
 		settings.SmartChunkSize = 1000
 	}
+	if settings.LiteRTRuntimeMode == "" {
+		settings.LiteRTRuntimeMode = "ondevice"
+	}
+	if settings.LiteRTPort <= 0 || settings.LiteRTPort > 65535 {
+		settings.LiteRTPort = 9379
+	}
 	return settings
 }
 
@@ -67,5 +75,7 @@ func sanitizeProviderSettingsForWeb(settings llm.ProviderSettings) llm.ProviderS
 	settings.Endpoint = ""
 	settings.DebugTranslationPromptTemplate = ""
 	settings.DebugPostEditPromptTemplate = ""
+	settings.LiteRTModelPath = ""
+	settings.LiteRTRuntimePath = ""
 	return settings
 }
