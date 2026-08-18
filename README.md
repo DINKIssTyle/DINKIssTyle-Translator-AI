@@ -62,7 +62,7 @@ Mobile Screen
 ### Prerequisites
 - [Go](https://go.dev/) (1.25+)
 - [Node.js](https://nodejs.org/) & NPM
-- [Wails v3 CLI](https://v3.wails.io/quick-start/installation/) (`go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.1`)
+- [Wails v3 CLI](https://v3.wails.io/quick-start/installation/) (`go install github.com/wailsapp/wails/v3/cmd/wails3@latest`)
 - A Unicode TrueType font for translated PDF generation (Noto Sans CJK is recommended on Linux; macOS and Windows use compatible system fonts when available)
 
 ### Live Development

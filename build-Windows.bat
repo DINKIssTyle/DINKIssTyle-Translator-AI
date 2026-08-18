@@ -12,11 +12,10 @@ echo [1/4] Cleaning up environment...
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 mkdir "%BUILD_DIR%"
 
-set WAILS3_VERSION=
-for /f "delims=" %%i in ('wails3 version 2^>nul') do set WAILS3_VERSION=%%i
-if not "%WAILS3_VERSION%"=="v3.0.0-beta.1" (
-    echo Installing Wails v3.0.0-beta.1 CLI...
-    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.1
+where wails3 >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo Installing latest Wails v3 CLI...
+    go install github.com/wailsapp/wails/v3/cmd/wails3@latest
     for /f "delims=" %%i in ('go env GOPATH') do set "PATH=%PATH%;%%i\bin"
 )
 

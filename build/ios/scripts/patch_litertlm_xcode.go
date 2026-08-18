@@ -178,13 +178,16 @@ func main() {
 	text = strings.ReplaceAll(text,
 		"INFOPLIST_FILE = main/Info.plist;",
 		`INFOPLIST_FILE = main/Info.plist;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				ONLY_ACTIVE_ARCH = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				SWIFT_VERSION = 5.0;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-				);
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;`)
+				);`)
 
 	text = strings.ReplaceAll(text,
 		"OTHER_LDFLAGS = (\n\t\t\t\t\t\"$(inherited)\",\n\t\t\t\t\t\"-ObjC\",\n\t\t\t\t);",

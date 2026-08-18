@@ -20,9 +20,9 @@ rm -rf "$GENERATED_APP"
 rm -f "$BUILD_DIR/$APP_NAME"
 mkdir -p "$BUILD_DIR"
 
-if ! command -v wails3 &> /dev/null || [ "$(wails3 version 2>/dev/null)" != "v3.0.0-beta.1" ]; then
-    echo "Installing Wails v3.0.0-beta.1 CLI..."
-    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.1
+if ! command -v wails3 &> /dev/null; then
+    echo "Installing latest Wails v3 CLI..."
+    go install github.com/wailsapp/wails/v3/cmd/wails3@latest
     export PATH=$PATH:$(go env GOPATH)/bin
 fi
 
