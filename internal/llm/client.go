@@ -595,7 +595,7 @@ func (p inlineProofreadPass) apply(reqData TranslationRequest, options translati
 		raw, stats, err = p.client.runCompatiblePrompt(p.reqCtx, reqData.Settings, promptPassOptions{
 			Prompt:              prompt,
 			PreparingLabel:      "Preparing request",
-			PreparingDetail:     "Connecting to completion endpoint",
+			PreparingDetail:     "Preparing translation model",
 			GenerateLabel:       "Translating and proofreading",
 			GenerateDetail:      "Waiting for draft and final output",
 			StreamTokens:        false,
@@ -1077,7 +1077,7 @@ func (c *Client) translateWithCompatibleAPI(reqCtx context.Context, reqData Tran
 	return c.runCompatiblePrompt(reqCtx, reqData.Settings, promptPassOptions{
 		Prompt:              prompt,
 		PreparingLabel:      "Preparing request",
-		PreparingDetail:     "Connecting to completion endpoint",
+		PreparingDetail:     "Preparing translation model",
 		GenerateLabel:       "Generating translation",
 		GenerateDetail:      "Waiting for model output",
 		StreamTokens:        true,

@@ -3,10 +3,12 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"dinkisstyle-translator/internal/pdfengine"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -88,27 +90,46 @@ func (f *FileHandler) OpenDocument() (OpenedDocument, error) {
 	}
 }
 
+func getDocumentsDir() string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		docs := filepath.Join(home, "Documents")
+		if err := os.MkdirAll(docs, 0755); err == nil {
+			return docs
+		}
+	}
+	return ""
+}
+
 // SaveFile saves text to a file (optional but good for translation results)
 func (f *FileHandler) SaveFile(content string) (string, error) {
-	selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
-		Title:    "Save Translation",
-		Filename: "translation.txt",
-		Filters: []application.FileFilter{
-			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
-			{DisplayName: "Markdown Files (*.md)", Pattern: "*.md"},
-		},
-	}).PromptForSingleSelection()
-	if err != nil {
-		return "", err
-	}
-	if selection == "" {
-		return "", nil
-	}
-
-	err = os.WriteFile(selection, []byte(content), 0644)
-	if err != nil {
-		return "", err
+	if f.app != nil && f.app.Dialog != nil {
+		selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+			Title:    "Save Translation",
+			Filename: "translation.txt",
+			Filters: []application.FileFilter{
+				{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+				{DisplayName: "Markdown Files (*.md)", Pattern: "*.md"},
+			},
+		}).PromptForSingleSelection()
+		if err == nil && selection != "" {
+			if err := os.WriteFile(selection, []byte(content), 0644); err != nil {
+				return "", err
+			}
+			return selection, nil
+		}
 	}
 
-	return selection, nil
+	// Fallback to Documents directory on mobile / headless
+	docs := getDocumentsDir()
+	if docs != "" {
+		filename := fmt.Sprintf("translation_%s.txt", time.Now().Format("20060102_150405"))
+		target := filepath.Join(docs, filename)
+		if err := os.WriteFile(target, []byte(content), 0644); err != nil {
+			return "", err
+		}
+		return target, nil
+	}
+
+	return "", errors.New("cannot determine save location")
 }

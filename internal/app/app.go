@@ -206,3 +206,19 @@ func (a *App) GetPlatformCapabilities() (translation.Capabilities, error) {
 	return translation.NewService().Capabilities(), nil
 }
 
+func (a *App) ListLocalLiteRTModels() ([]litertlm.LocalModelInfo, error) {
+	return litertlm.ListLocalModels()
+}
+
+func (a *App) GetLiteRTModelsDir() (string, error) {
+	return litertlm.GetModelsDir()
+}
+
+func (a *App) DownloadLiteRTModel(repoOrURL string, token string) (string, error) {
+	return litertlm.DownloadModel(context.Background(), repoOrURL, token, func(progress litertlm.DownloadProgress) {
+		if a.wails != nil && a.wails.Event != nil {
+			a.wails.Event.Emit("litert:download-progress", progress)
+		}
+	})
+}
+

@@ -21,69 +21,123 @@ private actor DKSTLiteRTEngine {
     engine = nil
   }
 
+  func findEffectiveModelURL() -> URL? {
+    if let configured = configuredModelURL, FileManager.default.fileExists(atPath: configured.path) {
+      return configured
+    }
+    // Check Documents/models
+    if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+      let modelsDir = docs.appendingPathComponent("models")
+      if let files = try? FileManager.default.contentsOfDirectory(at: modelsDir, includingPropertiesForKeys: nil) {
+        let litertFiles = files.filter { $0.pathExtension.lowercased() == "litertlm" }
+        if let gpuModel = litertFiles.first(where: { $0.lastPathComponent.contains("-gpu") }) {
+          return gpuModel
+        }
+        if let first = litertFiles.first {
+          return first
+        }
+      }
+    }
+    // Check Bundle
+    return Bundle.main.url(forResource: "gemma-2b-it", withExtension: "litertlm", subdirectory: "models")
+  }
+
   func modelExists() -> Bool {
-    configuredModelURL ?? Bundle.main.url(
-      forResource: "gemma-2b-it",
-      withExtension: "litertlm",
-      subdirectory: "models"
-    ) != nil
+    findEffectiveModelURL() != nil
   }
 
   func generate(_ prompt: String) throws -> String {
-    guard
-      let modelURL = configuredModelURL ?? Bundle.main.url(
-        forResource: "gemma-2b-it",
-        withExtension: "litertlm",
-        subdirectory: "models"
-      )
-    else {
+    guard let modelURL = findEffectiveModelURL() else {
       throw NSError(
         domain: "DKSTLiteRTLM",
         code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "models/gemma-2b-it.litertlm is not bundled"]
+        userInfo: [NSLocalizedDescriptionKey: "No .litertlm model found in Documents/models or App Bundle"]
       )
     }
 
-    let activeEngine: OpaquePointer
-    if let engine {
-      activeEngine = engine
-    } else {
-      let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.path
-      guard let created = Self.createEngine(modelPath: modelURL.path, backend: "gpu", cacheDir: cache)
+    let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.path
+
+    // Attempt 1: Try with existing or newly created GPU engine
+    if engine == nil {
+      engine = Self.createEngine(modelPath: modelURL.path, backend: "gpu", cacheDir: cache)
         ?? Self.createEngine(modelPath: modelURL.path, backend: "cpu", cacheDir: cache)
-      else {
-        throw NSError(domain: "DKSTLiteRTLM", code: 3, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM engine initialization failed"])
-      }
-      activeEngine = created
-      engine = activeEngine
     }
 
-    guard let conversation = litert_lm_conversation_create(activeEngine, nil) else {
-      throw NSError(domain: "DKSTLiteRTLM", code: 4, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM conversation creation failed"])
+    guard let activeEngine = engine else {
+      throw NSError(domain: "DKSTLiteRTLM", code: 3, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM engine initialization failed"])
+    }
+
+    if let result = Self.runInference(engine: activeEngine, prompt: prompt) {
+      return result
+    }
+
+    // Attempt 2: If GPU generation failed, recreate engine with CPU backend and retry
+    NSLog("LiteRT-LM GPU inference failed; falling back to CPU backend...")
+    if let oldEngine = engine { litert_lm_engine_delete(oldEngine) }
+    engine = nil
+
+    guard let cpuEngine = Self.createEngine(modelPath: modelURL.path, backend: "cpu", cacheDir: cache) else {
+      throw NSError(domain: "DKSTLiteRTLM", code: 5, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM CPU engine fallback failed"])
+    }
+    engine = cpuEngine
+
+    if let result = Self.runInference(engine: cpuEngine, prompt: prompt) {
+      return result
+    }
+
+    throw NSError(domain: "DKSTLiteRTLM", code: 5, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM generation failed on both GPU and CPU"])
+  }
+
+  private static func runInference(engine: OpaquePointer, prompt: String) -> String? {
+    guard let conversation = litert_lm_conversation_create(engine, nil) else {
+      return nil
     }
     defer { litert_lm_conversation_delete(conversation) }
 
-    let message: [String: Any] = [
-      "role": "user",
-      "content": [["type": "text", "text": prompt]],
+    // Try format 1: Structured content array
+    let formats: [[String: Any]] = [
+      ["role": "user", "content": [["type": "text", "text": prompt]]],
+      ["role": "user", "content": prompt],
     ]
-    let messageData = try JSONSerialization.data(withJSONObject: message)
-    let messageJSON = String(decoding: messageData, as: UTF8.self)
-    guard let response = litert_lm_conversation_send_message(conversation, messageJSON, nil, nil) else {
-      throw NSError(domain: "DKSTLiteRTLM", code: 5, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM generation failed"])
+
+    for msgObj in formats {
+      if let messageData = try? JSONSerialization.data(withJSONObject: msgObj),
+         let messageJSON = String(data: messageData, encoding: .utf8),
+         let response = litert_lm_conversation_send_message(conversation, messageJSON, nil, nil) {
+        defer { litert_lm_json_response_delete(response) }
+        if let responseChars = litert_lm_json_response_get_string(response) {
+          let responseString = String(cString: responseChars)
+          if let text = parseResponseText(responseString) {
+            return text
+          }
+          if !responseString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return responseString
+          }
+        }
+      }
     }
-    defer { litert_lm_json_response_delete(response) }
-    guard let responseChars = litert_lm_json_response_get_string(response) else {
-      throw NSError(domain: "DKSTLiteRTLM", code: 6, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM returned an empty response"])
-    }
-    let responseJSON = String(cString: responseChars)
+
+    return nil
+  }
+
+  private static func parseResponseText(_ responseJSON: String) -> String? {
     guard let data = responseJSON.data(using: .utf8),
-      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let content = object["content"] as? [[String: Any]]
-    else {
-      throw NSError(domain: "DKSTLiteRTLM", code: 7, userInfo: [NSLocalizedDescriptionKey: "LiteRT-LM returned invalid JSON"])
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+
+    if let content = object["content"] as? [[String: Any]] {
+      let text = content.compactMap { $0["text"] as? String }.joined(separator: " ")
+      if !text.isEmpty { return text }
     }
-    return content.compactMap { $0["text"] as? String }.joined(separator: " ")
+    if let text = object["text"] as? String, !text.isEmpty {
+      return text
+    }
+    if let choices = object["choices"] as? [[String: Any]],
+       let first = choices.first {
+      if let delta = first["delta"] as? [String: Any], let c = delta["content"] as? String { return c }
+      if let msg = first["message"] as? [String: Any], let c = msg["content"] as? String { return c }
+    }
+    return nil
   }
 
   private static func createEngine(modelPath: String, backend: String, cacheDir: String?) -> OpaquePointer? {
@@ -155,8 +209,22 @@ private final class DKSTLiteRTLMServer {
     let requestLine = text.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
     if requestLine.hasPrefix("GET /v1/models ") {
       Task {
-        let exists = await runtime.modelExists()
-        let models: [[String: Any]] = exists ? [["id": "gemma-2b-it", "object": "model"]] : []
+        var models: [[String: Any]] = []
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+          let modelsDir = docs.appendingPathComponent("models")
+          if let files = try? FileManager.default.contentsOfDirectory(at: modelsDir, includingPropertiesForKeys: nil) {
+            for file in files where file.pathExtension.lowercased() == "litertlm" {
+              let modelID = file.deletingPathExtension().lastPathComponent
+              models.append(["id": modelID, "object": "model"])
+            }
+          }
+        }
+        if let effective = await runtime.findEffectiveModelURL() {
+          let effectiveID = effective.deletingPathExtension().lastPathComponent
+          if !models.contains(where: { ($0["id"] as? String) == effectiveID }) {
+            models.insert(["id": effectiveID, "object": "model"], at: 0)
+          }
+        }
         sendJSON(connection, ["object": "list", "data": models])
       }
       return

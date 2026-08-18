@@ -15,6 +15,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as file$0 from "../file/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as litertlm$0 from "../litertlm/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as llm$0 from "../llm/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -44,10 +47,18 @@ export function CreateTranslatedPDF(req: file$0.PDFCreateRequest): $CancellableP
     });
 }
 
+export function DownloadLiteRTModel(repoOrURL: string, token: string): $CancellablePromise<string> {
+    return $Call.ByID(1915904537, repoOrURL, token);
+}
+
 export function GetHostProviderSettings(): $CancellablePromise<llm$0.ProviderSettings> {
     return $Call.ByID(4293725932).then(($result: any) => {
         return $$createType1($result);
     });
+}
+
+export function GetLiteRTModelsDir(): $CancellablePromise<string> {
+    return $Call.ByID(1520442641);
 }
 
 /**
@@ -75,6 +86,12 @@ export function GetWindowMode(): $CancellablePromise<string> {
     return $Call.ByID(3464172525);
 }
 
+export function ListLocalLiteRTModels(): $CancellablePromise<litertlm$0.LocalModelInfo[]> {
+    return $Call.ByID(4150302337).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
 export function OpenCertificateFolder(): $CancellablePromise<void> {
     return $Call.ByID(3732568537);
 }
@@ -85,7 +102,7 @@ export function OpenDebugStudioWindow(): $CancellablePromise<void> {
 
 export function OpenDocument(): $CancellablePromise<file$0.OpenedDocument> {
     return $Call.ByID(3147136995).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
@@ -98,7 +115,7 @@ export function OpenFile(): $CancellablePromise<string> {
 
 export function OpenPDF(): $CancellablePromise<file$0.PDFDocument> {
     return $Call.ByID(2331218116).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -108,7 +125,7 @@ export function ReadDebugStudioState(): $CancellablePromise<string> {
 
 export function RecoverPDFCheckpoint(): $CancellablePromise<$models.PDFCheckpointRecovery> {
     return $Call.ByID(2921514870).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -155,6 +172,8 @@ const $$createType2 = llm$0.ModelInfo.createFrom;
 const $$createType3 = $Create.Array($$createType2);
 const $$createType4 = translation$0.Capabilities.createFrom;
 const $$createType5 = $models.WebServerSettings.createFrom;
-const $$createType6 = file$0.OpenedDocument.createFrom;
-const $$createType7 = pdfengine$0.Document.createFrom;
-const $$createType8 = $models.PDFCheckpointRecovery.createFrom;
+const $$createType6 = litertlm$0.LocalModelInfo.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = file$0.OpenedDocument.createFrom;
+const $$createType9 = pdfengine$0.Document.createFrom;
+const $$createType10 = $models.PDFCheckpointRecovery.createFrom;

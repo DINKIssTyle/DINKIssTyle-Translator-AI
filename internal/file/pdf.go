@@ -1288,26 +1288,36 @@ func (f *FileHandler) SavePDF(dataBase64, defaultFilename string) (string, error
 	if strings.TrimSpace(defaultFilename) == "" {
 		defaultFilename = "translation.pdf"
 	}
-	selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
-		Title:    "Save Translated PDF",
-		Filename: filepath.Base(defaultFilename),
-		Filters: []application.FileFilter{
-			{DisplayName: "PDF Documents (*.pdf)", Pattern: "*.pdf"},
-		},
-	}).PromptForSingleSelection()
-	if err != nil {
-		return "", err
+	if f.app != nil && f.app.Dialog != nil {
+		selection, err := f.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+			Title:    "Save Translated PDF",
+			Filename: filepath.Base(defaultFilename),
+			Filters: []application.FileFilter{
+				{DisplayName: "PDF Documents (*.pdf)", Pattern: "*.pdf"},
+			},
+		}).PromptForSingleSelection()
+		if err == nil && selection != "" {
+			if !strings.EqualFold(filepath.Ext(selection), ".pdf") {
+				selection += ".pdf"
+			}
+			if err := os.WriteFile(selection, data, 0644); err != nil {
+				return "", err
+			}
+			return selection, nil
+		}
 	}
-	if selection == "" {
-		return "", nil
+
+	// Fallback to Documents directory on mobile / headless
+	docs := getDocumentsDir()
+	if docs != "" {
+		target := filepath.Join(docs, filepath.Base(defaultFilename))
+		if err := os.WriteFile(target, data, 0644); err != nil {
+			return "", err
+		}
+		return target, nil
 	}
-	if !strings.EqualFold(filepath.Ext(selection), ".pdf") {
-		selection += ".pdf"
-	}
-	if err := os.WriteFile(selection, data, 0644); err != nil {
-		return "", err
-	}
-	return selection, nil
+
+	return "", errors.New("cannot determine save location")
 }
 
 func minInt(a, b int) int {

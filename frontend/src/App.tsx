@@ -7,10 +7,12 @@ import {
     CancelTranslation,
     ConfirmClearSource,
     CreateTranslatedPDF,
+    DownloadLiteRTModel,
     GetHostProviderSettings,
     GetWebServerSettings,
     GetWindowMode,
     GetModels,
+    ListLocalLiteRTModels,
     OpenCertificateFolder,
     OpenDebugStudioWindow,
     OpenDocument,
@@ -1470,6 +1472,87 @@ function App() {
     const [reviewOverlay, setReviewOverlay] = useState<ReviewOverlayState>({ visible: false, hiding: false, text: "" });
     const [reviewNotes, setReviewNotes] = useState<ChunkReviewNoteState[]>([]);
     const [chunkPresentationVersion, setChunkPresentationVersion] = useState(0);
+    const [isDownloadingModel, setIsDownloadingModel] = useState(false);
+    const [downloadProgress, setDownloadProgress] = useState<{ percentage: number; downloaded: number; total: number; status: string; modelName: string; error?: string } | null>(null);
+    const [localLiteRTModels, setLocalLiteRTModels] = useState<{ name: string; path: string; sizeBytes: number }[]>([]);
+    const [hfDownloadRepo, setHfDownloadRepo] = useState("litert-community/gemma-4-E2B-it-litert-lm");
+    const [hfToken, setHfToken] = useState("");
+    const [showDownloadOptions, setShowDownloadOptions] = useState(false);
+
+    const refreshLocalModels = async () => {
+        if (isBrowserMode) return;
+        try {
+            const list = await ListLocalLiteRTModels();
+            setLocalLiteRTModels(list || []);
+            if (list && list.length > 0) {
+                setProviderSettings(prev => {
+                    if (prev.mode === "litertlm" && (!prev.liteRTModelPath || !prev.model)) {
+                        const target = list.find(m => m.name.includes("-gpu")) || list[0];
+                        const modelId = target.name.replace(/\.litertlm$/i, "");
+                        return {
+                            ...prev,
+                            liteRTModelPath: target.path,
+                            model: modelId,
+                        };
+                    }
+                    return prev;
+                });
+            }
+        } catch (err) {
+            console.warn("Could not list local models:", err);
+        }
+    };
+
+    useEffect(() => {
+        if (!isBrowserMode) {
+            void refreshLocalModels().then(() => {
+                void fetchModels();
+            });
+        } else {
+            void fetchModels();
+        }
+    }, [providerSettings.mode]);
+
+    useEffect(() => {
+        const unsub = Events?.On ? Events.On("litert:download-progress", (event: any) => {
+            const data = event?.data;
+            if (data) {
+                setDownloadProgress(data);
+                if (data.status === "completed" || data.status === "error") {
+                    setIsDownloadingModel(false);
+                }
+            }
+        }) : undefined;
+        return () => {
+            if (typeof unsub === "function") unsub();
+        };
+    }, []);
+
+    const handleDownloadLiteRTModel = async () => {
+        if (isDownloadingModel) return;
+        setIsDownloadingModel(true);
+        setDownloadProgress({ percentage: 0, downloaded: 0, total: 0, status: "connecting", modelName: "gemma-4-E2B-it.litertlm" });
+        try {
+            const savedPath = await DownloadLiteRTModel(hfDownloadRepo, hfToken);
+            if (savedPath) {
+                const modelId = savedPath.split(/[\/\\]/).pop()?.replace(/\.litertlm$/i, "") || "gemma-4-E2B-it";
+                const nextSettings: ProviderSettings = {
+                    ...providerSettings,
+                    liteRTModelPath: savedPath,
+                    model: modelId,
+                };
+                setProviderSettings(nextSettings);
+                showSavedToastMessage(`Downloaded and activated ${modelId}`);
+                await refreshLocalModels();
+                void fetchModels(nextSettings);
+            }
+        } catch (err: any) {
+            console.error("Failed to download model:", err);
+            showSavedToastMessage(`Download failed: ${String(err)}`);
+        } finally {
+            setIsDownloadingModel(false);
+        }
+    };
 
     const outputRef = useRef<HTMLDivElement>(null);
     const translationViewerRef = useRef<HTMLDivElement>(null);
@@ -2090,16 +2173,21 @@ function App() {
             return;
         }
         try {
-            const shouldUseNativeDialog = !isBrowserMode && desktopPlatform === "darwin";
-            const shouldClear = shouldUseNativeDialog
-                ? await ConfirmClearSource()
-                : window.confirm("Clear the source text?");
-            if (!shouldClear) {
-                announceAction("Kept the source text.");
-                return;
+            const shouldUseNativeDialog = !isBrowserMode && !isMobilePlatform && desktopPlatform === "darwin";
+            if (shouldUseNativeDialog) {
+                try {
+                    const shouldClear = await ConfirmClearSource();
+                    if (!shouldClear) {
+                        announceAction("Kept the source text.");
+                        return;
+                    }
+                } catch {
+                    // Fallback to clear
+                }
             }
             setSourceEditorDraft("");
             announceAction("Cleared the source editor.");
+            showSavedToastMessage("Cleared draft");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not clear the source text: ${String(err)}`);
@@ -2859,11 +2947,12 @@ function App() {
         openFileActionRef.current = handleOpenFile;
     });
 
-    const fetchModels = async () => {
-        if (providerSettings.mode === "apple" || providerSettings.mode === "google-mlkit") {
+    const fetchModels = async (settingsOverride?: ProviderSettings) => {
+        const activeSettings = settingsOverride || providerSettings;
+        if (activeSettings.mode === "apple" || activeSettings.mode === "google-mlkit") {
             setIsLoadingModels(false);
             setModels([]);
-            const name = providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)";
+            const name = activeSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)";
             setStatusMessage(`${name} is ready for on-device direct translation.`);
             setSettingsStatus(`${name} is active.`);
             return;
@@ -2875,7 +2964,7 @@ function App() {
                 ? await callBrowserJSON<ModelInfo[]>("/api/models", {
                     method: "GET",
                 })
-                : await GetModels(providerSettings) as ModelInfo[];
+                : await GetModels(activeSettings) as ModelInfo[];
             setModels(list || []);
             if (list && list.length > 0) {
                 setProviderSettings(prev => {
@@ -2891,6 +2980,7 @@ function App() {
                     const nextModelInfo = list.find(item => item.id === nextModel);
                     return {
                         ...prev,
+                        ...activeSettings,
                         model: nextModel,
                         reasoning: nextModelInfo?.supportsReasoning ? prev.reasoning : "",
                     };
@@ -2898,15 +2988,15 @@ function App() {
                 setStatusMessage(`Found ${list.length} available models.`);
                 setSettingsStatus(`Loaded ${list.length} models.`);
             } else {
-                setProviderSettings(prev => ({ ...prev, model: "" }));
+                setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
                 setStatusMessage("Connected, but the model list is empty.");
                 setSettingsStatus("Connected, but no models are available.");
             }
         } catch (err: any) {
             console.error("Failed to fetch models:", err);
             setModels([]);
-            setProviderSettings(prev => ({ ...prev, model: "" }));
-            const message = providerSettings.mode === "litertlm"
+            setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
+            const message = activeSettings.mode === "litertlm"
                 ? `Could not start LiteRT-LM. Check the .litertlm model and bundled runtime. (${String(err)})`
                 : `Could not load models. Check the endpoint and API key. (${String(err)})`;
             setStatusMessage(message);
@@ -3173,7 +3263,7 @@ function App() {
                 ? "Connecting to LM Studio"
                 : providerSettings.mode === "litertlm"
                     ? "Starting on-device LiteRT-LM"
-                    : "Connecting to LLM endpoint",
+                    : "Preparing translation model",
             progress: 0,
             overall_progress: 0,
             current_chunk: 0,
@@ -3385,13 +3475,17 @@ function App() {
             return;
         }
         try {
-            const shouldUseNativeDialog = !isBrowserMode && desktopPlatform === "darwin";
-            const shouldClear = shouldUseNativeDialog
-                ? await ConfirmClearSource()
-                : window.confirm("Clear the source text?");
-            if (!shouldClear) {
-                announceAction("Kept the source text.");
-                return;
+            const shouldUseNativeDialog = !isBrowserMode && !isMobilePlatform && desktopPlatform === "darwin";
+            if (shouldUseNativeDialog) {
+                try {
+                    const shouldClear = await ConfirmClearSource();
+                    if (!shouldClear) {
+                        announceAction("Kept the source text.");
+                        return;
+                    }
+                } catch {
+                    // Fallback to clear
+                }
             }
             if (pdfDocument) resetTranslationPresentation();
             setSourceText("");
@@ -3399,7 +3493,8 @@ function App() {
             setTranslatedPDF(null);
             setCompletedPDFPages(0);
             translatedPDFBuildIDRef.current += 1;
-            announceAction("Cleared the source editor.");
+            announceAction("Cleared the source text.");
+            showSavedToastMessage("Cleared source");
         } catch (err: any) {
             console.error(err);
             setStatusMessage(`Could not clear the source text: ${String(err)}`);
@@ -3433,14 +3528,39 @@ function App() {
                 return;
             }
             try {
+                if (isMobilePlatform && typeof navigator !== "undefined" && navigator.share) {
+                    try {
+                        const byteCharacters = atob(translatedPDF.dataBase64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) {
+                            byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        }
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const file = new File([byteArray], translatedPDF.name || "translated.pdf", { type: "application/pdf" });
+                        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                            await navigator.share({
+                                files: [file],
+                                title: "Translated PDF",
+                            });
+                            announceAction("Shared translated PDF.");
+                            return;
+                        }
+                    } catch (shareErr) {
+                        console.warn("Share failed, falling back to SavePDF", shareErr);
+                    }
+                }
                 const savedPath = await SavePDF(translatedPDF.dataBase64, translatedPDF.name);
-                if (savedPath) announceAction(`Saved translated PDF to: ${savedPath}`);
+                if (savedPath) {
+                    announceAction(`Saved translated PDF to: ${savedPath}`);
+                    showSavedToastMessage("Saved translated PDF");
+                }
             } catch (err: any) {
                 console.error(err);
                 setStatusMessage(`Could not save translated PDF: ${String(err)}`);
             }
             return;
         }
+
         if (isBrowserMode) {
             try {
                 const blob = new Blob([cleanedTranslation], { type: "text/plain;charset=utf-8" });
@@ -3451,19 +3571,42 @@ function App() {
                 link.click();
                 window.URL.revokeObjectURL(url);
                 announceAction("Downloaded translation file.");
+                showSavedToastMessage("Downloaded translation");
             } catch (err: any) {
                 console.error(err);
                 setStatusMessage(`Could not download translation: ${String(err)}`);
             }
             return;
         }
+
         try {
+            if (!cleanedTranslation.trim()) {
+                announceAction("There is no translation to save.");
+                return;
+            }
+            if (isMobilePlatform && typeof navigator !== "undefined" && navigator.share) {
+                try {
+                    const file = new File([cleanedTranslation], "translation.txt", { type: "text/plain;charset=utf-8" });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            files: [file],
+                            title: "Translation Result",
+                        });
+                        announceAction("Shared translation file.");
+                        return;
+                    }
+                } catch (shareErr) {
+                    console.warn("Share failed, falling back to SaveFile", shareErr);
+                }
+            }
             const savedPath = await SaveFile(cleanedTranslation);
             if (savedPath) {
                 announceAction(`Saved translation to: ${savedPath}`);
+                showSavedToastMessage("Saved translation");
             }
         } catch (err: any) {
             console.error(err);
+            setStatusMessage(`Could not save translation: ${String(err)}`);
         }
     };
 
@@ -3624,17 +3767,20 @@ function App() {
             if (!modelPath) {
                 return;
             }
-            setProviderSettings(prev => ({
-                ...prev,
+            const modelId = modelPath.split(/[\/\\]/).pop()?.replace(/\.litertlm$/i, "") || "gemma-2b-it";
+            const nextSettings: ProviderSettings = {
+                ...providerSettings,
                 liteRTModelPath: modelPath,
-                model: "",
-            }));
-            setModels([]);
+                model: modelId,
+            };
+            setProviderSettings(nextSettings);
             if (modelPath.toLowerCase().endsWith(".bin")) {
                 setSettingsStatus("Legacy .bin files must be converted to .litertlm before LiteRT-LM can load them.");
                 return;
             }
-            setSettingsStatus("Model selected. Refresh models to start the on-device runtime.");
+            setSettingsStatus(`Selected ${modelId}`);
+            showSavedToastMessage(`Selected model: ${modelId}`);
+            void fetchModels(nextSettings);
         } catch (err: any) {
             setSettingsStatus(`Could not select LiteRT-LM model: ${String(err)}`);
         }
@@ -3697,6 +3843,7 @@ function App() {
             themeMode,
             updatedProfiles
         );
+        void fetchModels(nextSettings);
     };
 
     const handleCloseEnhancedContextModal = () => {
@@ -3858,24 +4005,217 @@ function App() {
                             {activityLabel}
                         </button>
                         {showModelPopover && (
-                            <div className="model-popover">
-                                {models.length > 0 ? (
-                                    models.map(model => (
+                            <div className="model-popover-overlay" onClick={() => setShowModelPopover(false)}>
+                                <div className="model-popover" onClick={e => e.stopPropagation()}>
+                                    {/* LM Studio */}
+                                    <div className="model-popover-section">
                                         <button
-                                            key={model.id}
                                             type="button"
-                                            className={`model-popover-item ${providerSettings.model === model.id ? "is-selected" : ""}`}
-                                            onClick={() => handleSelectModel(model.id)}
+                                            className={`model-popover-section-header ${providerSettings.mode === "lmstudio" ? "is-selected" : ""}`}
+                                            onClick={() => {
+                                                if (providerSettings.mode !== "lmstudio") {
+                                                    handleSwitchProviderMode("lmstudio");
+                                                } else {
+                                                    fetchModels();
+                                                }
+                                            }}
                                         >
-                                            <span className="model-popover-name">{model.displayName || model.id}</span>
-                                            {providerSettings.model === model.id && (
+                                            <span>LM Studio</span>
+                                            {providerSettings.mode === "lmstudio" && (
                                                 <span className="material-symbols-outlined model-popover-check">check</span>
                                             )}
                                         </button>
-                                    ))
-                                ) : (
-                                    <div className="model-popover-empty">No models loaded</div>
-                                )}
+                                        {providerSettings.mode === "lmstudio" && (
+                                            isLoadingModels ? (
+                                                <div className="model-popover-empty">- Loading models...</div>
+                                            ) : models.length > 0 ? (
+                                                models.map(model => (
+                                                    <button
+                                                        key={model.id}
+                                                        type="button"
+                                                        className={`model-popover-subitem ${providerSettings.model === model.id ? "is-selected" : ""}`}
+                                                        onClick={() => {
+                                                            handleSelectModel(model.id);
+                                                            setShowModelPopover(false);
+                                                        }}
+                                                    >
+                                                        <span className="model-popover-name">- {model.displayName || model.id}</span>
+                                                        {providerSettings.model === model.id && (
+                                                            <span className="material-symbols-outlined model-popover-check">check</span>
+                                                        )}
+                                                    </button>
+                                                ))
+                                            ) : (
+                                                <div className="model-popover-empty">- No models loaded</div>
+                                            )
+                                        )}
+                                    </div>
+
+                                    <div className="model-popover-divider" />
+
+                                    {/* OpenAI Compatible */}
+                                    <div className="model-popover-section">
+                                        <button
+                                            type="button"
+                                            className={`model-popover-section-header ${providerSettings.mode === "openai" ? "is-selected" : ""}`}
+                                            onClick={() => {
+                                                if (providerSettings.mode !== "openai") {
+                                                    handleSwitchProviderMode("openai");
+                                                } else {
+                                                    fetchModels();
+                                                }
+                                            }}
+                                        >
+                                            <span>OpenAI Compatible</span>
+                                            {providerSettings.mode === "openai" && (
+                                                <span className="material-symbols-outlined model-popover-check">check</span>
+                                            )}
+                                        </button>
+                                        {providerSettings.mode === "openai" && (
+                                            isLoadingModels ? (
+                                                <div className="model-popover-empty">- Loading models...</div>
+                                            ) : models.length > 0 ? (
+                                                models.map(model => (
+                                                    <button
+                                                        key={model.id}
+                                                        type="button"
+                                                        className={`model-popover-subitem ${providerSettings.model === model.id ? "is-selected" : ""}`}
+                                                        onClick={() => {
+                                                            handleSelectModel(model.id);
+                                                            setShowModelPopover(false);
+                                                        }}
+                                                    >
+                                                        <span className="model-popover-name">- {model.displayName || model.id}</span>
+                                                        {providerSettings.model === model.id && (
+                                                            <span className="material-symbols-outlined model-popover-check">check</span>
+                                                        )}
+                                                    </button>
+                                                ))
+                                            ) : (
+                                                <div className="model-popover-empty">- No models loaded</div>
+                                            )
+                                        )}
+                                    </div>
+
+                                    <div className="model-popover-divider" />
+
+                                    {/* LiteRT-LM (On-Device) */}
+                                    <div className="model-popover-section">
+                                        <button
+                                            type="button"
+                                            className={`model-popover-section-header ${providerSettings.mode === "litertlm" ? "is-selected" : ""}`}
+                                            onClick={() => {
+                                                if (providerSettings.mode !== "litertlm") {
+                                                    handleSwitchProviderMode("litertlm");
+                                                } else {
+                                                    fetchModels();
+                                                }
+                                            }}
+                                        >
+                                            <span>LiteRT-LM (On-device)</span>
+                                            {providerSettings.mode === "litertlm" && (
+                                                <span className="material-symbols-outlined model-popover-check">check</span>
+                                            )}
+                                        </button>
+                                        {providerSettings.mode === "litertlm" && (
+                                            isLoadingModels ? (
+                                                <div className="model-popover-empty">- Loading models...</div>
+                                            ) : (localLiteRTModels.length > 0 || models.length > 0) ? (
+                                                <>
+                                                    {localLiteRTModels.map(m => {
+                                                        const modelId = m.name.replace(/\.litertlm$/i, "");
+                                                        const isSelected = providerSettings.model === modelId || providerSettings.liteRTModelPath === m.path;
+                                                        return (
+                                                            <button
+                                                                key={m.path}
+                                                                type="button"
+                                                                className={`model-popover-subitem ${isSelected ? "is-selected" : ""}`}
+                                                                onClick={() => {
+                                                                    const nextSettings: ProviderSettings = {
+                                                                        ...providerSettings,
+                                                                        liteRTModelPath: m.path,
+                                                                        model: modelId,
+                                                                    };
+                                                                    setProviderSettings(nextSettings);
+                                                                    showSavedToastMessage(`Selected: ${modelId}`);
+                                                                    setShowModelPopover(false);
+                                                                    void fetchModels(nextSettings);
+                                                                }}
+                                                            >
+                                                                <span className="model-popover-name">- {m.name}</span>
+                                                                {isSelected && (
+                                                                    <span className="material-symbols-outlined model-popover-check">check</span>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                    {models.filter(mod => !localLiteRTModels.some(lm => lm.name.replace(/\.litertlm$/i, "") === mod.id)).map(model => (
+                                                        <button
+                                                            key={model.id}
+                                                            type="button"
+                                                            className={`model-popover-subitem ${providerSettings.model === model.id ? "is-selected" : ""}`}
+                                                            onClick={() => {
+                                                                handleSelectModel(model.id);
+                                                                setShowModelPopover(false);
+                                                            }}
+                                                        >
+                                                            <span className="model-popover-name">- {model.displayName || model.id}</span>
+                                                            {providerSettings.model === model.id && (
+                                                                <span className="material-symbols-outlined model-popover-check">check</span>
+                                                            )}
+                                                        </button>
+                                                    ))}
+                                                </>
+                                            ) : (
+                                                <div className="model-popover-empty">- No models in /models</div>
+                                            )
+                                        )}
+                                    </div>
+
+                                    {/* Apple Translation */}
+                                    {isApplePlatform && (
+                                        <>
+                                            <div className="model-popover-divider" />
+                                            <div className="model-popover-section">
+                                                <button
+                                                    type="button"
+                                                    className={`model-popover-section-header ${providerSettings.mode === "apple" ? "is-selected" : ""}`}
+                                                    onClick={() => {
+                                                        handleSwitchProviderMode("apple");
+                                                        setShowModelPopover(false);
+                                                    }}
+                                                >
+                                                    <span>Apple Translation</span>
+                                                    {providerSettings.mode === "apple" && (
+                                                        <span className="material-symbols-outlined model-popover-check">check</span>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {/* Google Translation (ML Kit) */}
+                                    {isMLKitPlatform && (
+                                        <>
+                                            <div className="model-popover-divider" />
+                                            <div className="model-popover-section">
+                                                <button
+                                                    type="button"
+                                                    className={`model-popover-section-header ${providerSettings.mode === "google-mlkit" ? "is-selected" : ""}`}
+                                                    onClick={() => {
+                                                        handleSwitchProviderMode("google-mlkit");
+                                                        setShowModelPopover(false);
+                                                    }}
+                                                >
+                                                    <span>Google Translation (ML Kit)</span>
+                                                    {providerSettings.mode === "google-mlkit" && (
+                                                        <span className="material-symbols-outlined model-popover-check">check</span>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>
@@ -4385,9 +4725,6 @@ function App() {
                                             {providerSettings.mode === "google-mlkit" && (
                                                 <span>Translated by Google Translation · </span>
                                             )}
-                                            {providerSettings.mode === "apple" && (
-                                                <span>Translated by Apple Translation · </span>
-                                            )}
                                             {translationStats}
                                         </>
                                     )}
@@ -4701,24 +5038,26 @@ function App() {
                                                 <option value="dark">Dark</option>
                                             </select>
                                         </div>
-                                        <div className="settings-field">
-                                            <span>Model</span>
-                                            <div className="toolbar-group model-group">
-                                                <select value={providerSettings.model} onChange={e => {
-                                                    handleSelectModel(e.target.value);
-                                                }} disabled={isLoadingModels}>
-                                                    <option value="">Select a Model</option>
-                                                    {models.map(model => (
-                                                        <option key={model.id} value={model.id}>
-                                                            {model.displayName || model.id}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <button className="icon-btn" onClick={fetchModels} disabled={isLoadingModels} title="Refresh Models">
-                                                    <span className="material-symbols-outlined">refresh</span>
-                                                </button>
+                                        {providerSettings.mode !== "litertlm" && (
+                                            <div className="settings-field">
+                                                <span>Model</span>
+                                                <div className="toolbar-group model-group">
+                                                    <select value={providerSettings.model} onChange={e => {
+                                                        handleSelectModel(e.target.value);
+                                                    }} disabled={isLoadingModels}>
+                                                        <option value="">Select a Model</option>
+                                                        {models.map(model => (
+                                                            <option key={model.id} value={model.id}>
+                                                                {model.displayName || model.id}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <button className="icon-btn" onClick={() => fetchModels()} disabled={isLoadingModels} title="Refresh Models">
+                                                        <span className="material-symbols-outlined">refresh</span>
+                                                    </button>
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
                                         <div className="settings-field">
                                             <span>Smart Chunking</span>
                                             <label className="settings-checkbox">
@@ -4852,7 +5191,7 @@ function App() {
                                                         {providerSettings.mode === "litertlm" && (
                                                             <>
                                                                 <div className="settings-field settings-field-details">
-                                                                    <span>Model Package</span>
+                                                                    <span>Model Package (.litertlm)</span>
                                                                     <div className="settings-inline-action">
                                                                         <input
                                                                             type="text"
@@ -4862,13 +5201,120 @@ function App() {
                                                                                 liteRTModelPath: e.target.value,
                                                                                 model: "",
                                                                             }))}
-                                                                            placeholder="gemma-2b-it.litertlm"
+                                                                            placeholder="e.g. gemma-4-E2B-it.litertlm"
                                                                         />
                                                                         <button className="btn btn-secondary btn-small" type="button" onClick={handleSelectLiteRTLMModelFile}>
                                                                             Browse
                                                                         </button>
                                                                     </div>
-                                                                    <div className="settings-note">LiteRT-LM requires a .litertlm package. A legacy gemma-2b-it .bin must be converted first.</div>
+
+                                                                    {localLiteRTModels.length > 0 && (
+                                                                        <div className="settings-local-models" style={{ marginTop: 8 }}>
+                                                                            <span style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+                                                                                Available in /models:
+                                                                            </span>
+                                                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                                                                {localLiteRTModels.map(m => (
+                                                                                    <button
+                                                                                        key={m.path}
+                                                                                        type="button"
+                                                                                        className={`btn btn-small ${providerSettings.liteRTModelPath === m.path ? "btn-primary" : "btn-secondary"}`}
+                                                                                        style={{ fontSize: "0.8rem", padding: "4px 8px" }}
+                                                                                        onClick={() => {
+                                                                                            setProviderSettings(prev => ({
+                                                                                                ...prev,
+                                                                                                liteRTModelPath: m.path,
+                                                                                                model: "",
+                                                                                            }));
+                                                                                            void fetchModels({
+                                                                                                ...providerSettings,
+                                                                                                liteRTModelPath: m.path,
+                                                                                                model: "",
+                                                                                            });
+                                                                                        }}
+                                                                                    >
+                                                                                        {m.name} ({(m.sizeBytes / (1024 * 1024)).toFixed(0)} MB)
+                                                                                    </button>
+                                                                                ))}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+
+                                                                    <div className="settings-download-box" style={{ marginTop: 10, padding: 12, borderRadius: 8, background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                                                            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Hugging Face Model Download</span>
+                                                                            <button
+                                                                                type="button"
+                                                                                className="btn btn-secondary btn-small"
+                                                                                style={{ fontSize: "0.75rem", padding: "2px 6px" }}
+                                                                                onClick={() => setShowDownloadOptions(prev => !prev)}
+                                                                            >
+                                                                                {showDownloadOptions ? "Simple" : "Custom Options"}
+                                                                            </button>
+                                                                        </div>
+
+                                                                        {showDownloadOptions && (
+                                                                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                                                                                <label style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
+                                                                                    HF Repo / Direct URL
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        value={hfDownloadRepo}
+                                                                                        onChange={e => setHfDownloadRepo(e.target.value)}
+                                                                                        placeholder="litert-community/gemma-4-E2B-it-litert-lm"
+                                                                                        style={{ marginTop: 2, fontSize: "0.85rem" }}
+                                                                                    />
+                                                                                </label>
+                                                                                <label style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
+                                                                                    HF Token (Optional for gated models)
+                                                                                    <input
+                                                                                        type="password"
+                                                                                        value={hfToken}
+                                                                                        onChange={e => setHfToken(e.target.value)}
+                                                                                        placeholder="hf_..."
+                                                                                        style={{ marginTop: 2, fontSize: "0.85rem" }}
+                                                                                    />
+                                                                                </label>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {isDownloadingModel ? (
+                                                                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                                                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem" }}>
+                                                                                    <span>{downloadProgress?.status === "connecting" ? "Connecting..." : `Downloading ${downloadProgress?.modelName || "model"}...`}</span>
+                                                                                    <span>{downloadProgress?.percentage ? `${downloadProgress.percentage.toFixed(1)}%` : ""}</span>
+                                                                                </div>
+                                                                                <div style={{ width: "100%", height: 6, background: "rgba(255, 255, 255, 0.1)", borderRadius: 3, overflow: "hidden" }}>
+                                                                                    <div
+                                                                                        style={{
+                                                                                            width: `${downloadProgress?.percentage || 0}%`,
+                                                                                            height: "100%",
+                                                                                            background: "var(--color-accent, #3b82f6)",
+                                                                                            transition: "width 0.2s linear",
+                                                                                        }}
+                                                                                    />
+                                                                                </div>
+                                                                                {downloadProgress?.total ? (
+                                                                                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "right" }}>
+                                                                                        {(downloadProgress.downloaded / (1024 * 1024)).toFixed(1)} MB / {(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB
+                                                                                    </div>
+                                                                                ) : null}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="btn btn-primary"
+                                                                                style={{ width: "100%", justifyContent: "center", display: "flex", alignItems: "center", gap: 6 }}
+                                                                                onClick={handleDownloadLiteRTModel}
+                                                                            >
+                                                                                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>download</span>
+                                                                                Download Gemma 4 E2B (.litertlm)
+                                                                            </button>
+                                                                        )}
+                                                                        <div className="settings-note" style={{ marginTop: 6, fontSize: "0.75rem" }}>
+                                                                            Models are saved permanently to the app Documents /models folder.
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
                                                                 <label className="settings-field">
                                                                     <span>Runtime Mode</span>
@@ -4927,24 +5373,26 @@ function App() {
                                                                 </label>
                                                             </>
                                                         )}
-                                                        <div className="settings-field">
-                                                            <span>Model</span>
-                                                            <div className="toolbar-group model-group">
-                                                                <select value={providerSettings.model} onChange={e => {
-                                                                    handleSelectModel(e.target.value);
-                                                                }} disabled={isLoadingModels}>
-                                                                    <option value="">Select a Model</option>
-                                                                    {models.map(model => (
-                                                                        <option key={model.id} value={model.id}>
-                                                                            {model.displayName || model.id}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <button className="icon-btn" onClick={fetchModels} disabled={isLoadingModels} title="Refresh Models">
-                                                                    <span className="material-symbols-outlined">refresh</span>
-                                                                </button>
+                                                        {providerSettings.mode !== "litertlm" && (
+                                                            <div className="settings-field">
+                                                                <span>Model</span>
+                                                                <div className="toolbar-group model-group">
+                                                                    <select value={providerSettings.model} onChange={e => {
+                                                                        handleSelectModel(e.target.value);
+                                                                    }} disabled={isLoadingModels}>
+                                                                        <option value="">Select a Model</option>
+                                                                        {models.map(model => (
+                                                                            <option key={model.id} value={model.id}>
+                                                                                {model.displayName || model.id}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <button className="icon-btn" onClick={() => fetchModels()} disabled={isLoadingModels} title="Refresh Models">
+                                                                        <span className="material-symbols-outlined">refresh</span>
+                                                                    </button>
+                                                                </div>
                                                             </div>
-                                                        </div>
+                                                        )}
                                                         <div className="settings-field">
                                                             <span>Smart Chunking</span>
                                                             <label className="settings-checkbox">
