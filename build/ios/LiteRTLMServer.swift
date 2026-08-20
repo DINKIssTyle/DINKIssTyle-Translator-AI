@@ -181,6 +181,7 @@ private final class DKSTLiteRTLMServer {
     guard listener == nil else { return }
     do {
       let parameters = NWParameters.tcp
+      parameters.allowLocalEndpointReuse = true
       parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: 9379)
       let listener = try NWListener(using: parameters)
       listener.newConnectionHandler = { [weak self] connection in
@@ -227,7 +228,9 @@ private final class DKSTLiteRTLMServer {
       return
     }
     let requestLine = text.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
-    if requestLine.hasPrefix("GET /v1/models ") {
+    let lowerLine = requestLine.lowercased()
+
+    if lowerLine.contains("get /v1/models") || lowerLine.contains("get /models") {
       Task {
         var models: [[String: Any]] = []
         if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -249,7 +252,8 @@ private final class DKSTLiteRTLMServer {
       }
       return
     }
-    if requestLine.hasPrefix("POST /configure") {
+
+    if lowerLine.contains("post /configure") {
       let bodyData: Data
       if let boundary = data.range(of: Data("\r\n\r\n".utf8)) {
         bodyData = data.subdata(in: boundary.upperBound..<data.count)
@@ -270,7 +274,8 @@ private final class DKSTLiteRTLMServer {
       }
       return
     }
-    guard requestLine.hasPrefix("POST /v1/chat/completions") else {
+
+    guard lowerLine.contains("post /v1/chat/completions") || lowerLine.contains("post /chat/completions") else {
       send(connection, status: "404 Not Found", type: "text/plain", body: Data("not found".utf8))
       return
     }

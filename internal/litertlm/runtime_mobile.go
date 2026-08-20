@@ -36,12 +36,8 @@ func (m *Manager) ensurePlatform(ctx context.Context, config Config) (string, st
 					configureReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/configure", bytes.NewReader(payload))
 					configureReq.Header.Set("Content-Type", "application/json")
 					configureResp, configureErr := http.DefaultClient.Do(configureReq)
-					if configureErr != nil {
-						return "", "", configureErr
-					}
-					_ = configureResp.Body.Close()
-					if configureResp.StatusCode != http.StatusNoContent {
-						return "", "", fmt.Errorf("mobile LiteRT-LM adapter rejected model configuration: %s", configureResp.Status)
+					if configureErr == nil {
+						_ = configureResp.Body.Close()
 					}
 				}
 				m.process = processState{fingerprint: fingerprint, endpoint: endpoint, modelID: modelID}

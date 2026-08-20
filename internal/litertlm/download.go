@@ -293,8 +293,8 @@ func resolveFromHFRepo(repo string, token string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if strings.TrimSpace(token) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	if tok := sanitizeHeaderToken(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -361,8 +361,8 @@ func DownloadModel(ctx context.Context, repoOrURL string, token string, onProgre
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(token) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	if tok := sanitizeHeaderToken(token); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	if existingBytes > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingBytes))
@@ -529,4 +529,19 @@ func DownloadModel(ctx context.Context, repoOrURL string, token string, onProgre
 	}
 
 	return targetPath, nil
+}
+
+func sanitizeHeaderToken(val string) string {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(len(val))
+	for _, r := range val {
+		if r >= 0x20 && r <= 0x7E {
+			sb.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }

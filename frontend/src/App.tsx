@@ -3122,11 +3122,13 @@ function App() {
             setModels(list || []);
             if (list && list.length > 0) {
                 setProviderSettings(prev => {
-                    let nextModel = prev.model;
+                    let nextModel = prev.model || activeSettings.model;
                     const ids = list.map(item => item.id);
                     if (!nextModel || !ids.includes(nextModel)) {
                         if (storedSettings?.selectedModel && ids.includes(storedSettings.selectedModel)) {
                             nextModel = storedSettings.selectedModel;
+                        } else if (activeSettings.model && ids.includes(activeSettings.model)) {
+                            nextModel = activeSettings.model;
                         } else {
                             nextModel = list[0].id;
                         }
@@ -3142,16 +3144,27 @@ function App() {
                 setStatusMessage(`Found ${list.length} available models.`);
                 setSettingsStatus(`Loaded ${list.length} models.`);
             } else {
-                setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
-                setStatusMessage("Connected, but the model list is empty.");
-                setSettingsStatus("Connected, but no models are available.");
+                if (activeSettings.mode === "litertlm" && activeSettings.model) {
+                    setProviderSettings(prev => ({ ...prev, ...activeSettings }));
+                    setStatusMessage(`LiteRT-LM model ${activeSettings.model} selected.`);
+                    setSettingsStatus(`Model ${activeSettings.model} ready.`);
+                } else {
+                    setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
+                    setStatusMessage("Connected, but the model list is empty.");
+                    setSettingsStatus("Connected, but no models are available.");
+                }
             }
         } catch (err: any) {
             console.error("Failed to fetch models:", err);
-            setModels([]);
-            setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
+            if (activeSettings.mode === "litertlm" && activeSettings.model) {
+                // Retain selected local model so user can translate immediately
+                setProviderSettings(prev => ({ ...prev, ...activeSettings }));
+            } else {
+                setModels([]);
+                setProviderSettings(prev => ({ ...prev, ...activeSettings, model: "" }));
+            }
             const message = activeSettings.mode === "litertlm"
-                ? `Could not start LiteRT-LM. Check the .litertlm model and bundled runtime. (${String(err)})`
+                ? `Could not query LiteRT-LM models. (${String(err)})`
                 : `Could not load models. Check the endpoint and API key. (${String(err)})`;
             setStatusMessage(message);
             setSettingsStatus(message);
@@ -3161,7 +3174,8 @@ function App() {
     };
 
     const handleTranslate = async () => {
-        if (!sourceText.trim() || (!selectedModel && !isNativeMode) || isTranslating) return;
+        const effectiveModel = selectedModel || (providerSettings.mode === "litertlm" && localLiteRTModels.length > 0 ? localLiteRTModels[0].name.replace(/\.litertlm$/i, "") : "");
+        if (!sourceText.trim() || (!effectiveModel && !isNativeMode) || isTranslating) return;
 
         const runID = translationRunIdRef.current + 1;
         translationRunIdRef.current = runID;
@@ -4216,6 +4230,13 @@ function App() {
         setProviderProfiles(updatedProfiles);
         setModels([]);
 
+        let initialModel = targetProfile.model ?? "";
+        let initialModelPath = targetProfile.liteRTModelPath ?? "";
+        if (newMode === "litertlm" && !initialModel && localLiteRTModels.length > 0) {
+            initialModel = localLiteRTModels[0].name.replace(/\.litertlm$/i, "");
+            initialModelPath = localLiteRTModels[0].path;
+        }
+
         const nextSettings: ProviderSettings = {
             ...providerSettings,
             mode: newMode,
@@ -4223,10 +4244,10 @@ function App() {
                 ? `http://127.0.0.1:${targetProfile.liteRTPort || 9379}`
                 : (targetProfile.endpoint || DEFAULT_PROVIDER_PROFILES[newMode].endpoint),
             apiKey: targetProfile.apiKey ?? "",
-            model: targetProfile.model ?? "",
+            model: initialModel,
             reasoning: targetProfile.reasoning ?? "",
             temperature: clampTemperature(targetProfile.temperature ?? DEFAULT_TEMPERATURE),
-            liteRTModelPath: targetProfile.liteRTModelPath ?? "",
+            liteRTModelPath: initialModelPath,
             liteRTRuntimePath: targetProfile.liteRTRuntimePath ?? "",
             liteRTRuntimeMode: (targetProfile.liteRTRuntimeMode === "server" && !isMobilePlatform) ? "server" : "ondevice",
             liteRTPort: targetProfile.liteRTPort || 9379,
@@ -4250,15 +4271,22 @@ function App() {
     };
 
     const updateRemoteProfile = (mode: "openai" | "lmstudio", updates: Partial<ProviderProfile>) => {
+        const sanitizedUpdates: Partial<ProviderProfile> = { ...updates };
+        if (typeof sanitizedUpdates.apiKey === "string") {
+            sanitizedUpdates.apiKey = sanitizedUpdates.apiKey.replace(/[\x00-\x1F\x7F\u200B-\u200D\uFEFF]/g, "").trim();
+        }
+        if (typeof sanitizedUpdates.endpoint === "string") {
+            sanitizedUpdates.endpoint = sanitizedUpdates.endpoint.trim();
+        }
         const current = providerProfiles[mode] || DEFAULT_PROVIDER_PROFILES[mode];
-        const nextProfile: ProviderProfile = { ...current, ...updates };
+        const nextProfile: ProviderProfile = { ...current, ...sanitizedUpdates };
         const nextProfiles = { ...providerProfiles, [mode]: nextProfile };
         setProviderProfiles(nextProfiles);
 
         if (providerSettings.mode === mode) {
             const nextSettings: ProviderSettings = {
                 ...providerSettings,
-                ...updates,
+                ...sanitizedUpdates,
             };
             setProviderSettings(nextSettings);
             persistSettings(
@@ -4426,7 +4454,9 @@ function App() {
         setStatusMessage(`Reasoning set to ${value || "Auto"}.`);
     };
 
-    const canTranslate = Boolean(sourceText.trim() && (selectedModel || isNativeMode) && !isTranslating);
+    const effectiveSelectedModel = selectedModel || (providerSettings.mode === "litertlm" && localLiteRTModels.length > 0 ? localLiteRTModels[0].name.replace(/\.litertlm$/i, "") : "");
+
+    const canTranslate = Boolean(sourceText.trim() && (effectiveSelectedModel || isNativeMode) && !isTranslating);
 
     const primaryActionLabel = "Translate";
     const primaryActionIcon = "translate";
@@ -4436,8 +4466,8 @@ function App() {
         ? `Translating ${formatElapsed(elapsedSeconds)}`
         : isNativeMode
             ? providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"
-            : selectedModel
-                ? `${selectedModel} ready`
+            : effectiveSelectedModel
+                ? `${effectiveSelectedModel} ready`
                 : "No model selected";
 
     if (windowMode === "loading" && !isBrowserMode) {
@@ -4610,10 +4640,23 @@ function App() {
                                                                 onClick={() => {
                                                                     const nextSettings: ProviderSettings = {
                                                                         ...providerSettings,
+                                                                        mode: "litertlm",
                                                                         liteRTModelPath: m.path,
                                                                         model: modelId,
                                                                     };
                                                                     setProviderSettings(nextSettings);
+                                                                    persistSettings(
+                                                                        modelId,
+                                                                        nextSettings,
+                                                                        fastTranslationEnabled,
+                                                                        editorFontSize,
+                                                                        sourceLang,
+                                                                        targetLang,
+                                                                        showDebugPanel,
+                                                                        instruction,
+                                                                        themeMode,
+                                                                        providerProfiles
+                                                                    );
                                                                     showSavedToastMessage(`Selected: ${modelId}`);
                                                                     setShowModelPopover(false);
                                                                     void fetchModels(nextSettings);

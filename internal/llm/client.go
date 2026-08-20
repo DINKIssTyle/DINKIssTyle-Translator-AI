@@ -1737,9 +1737,26 @@ func normalizeLMStudioNativeBaseURL(endpoint string) string {
 	return trimmed + "/api/v1"
 }
 
+func sanitizeHeaderValue(val string) string {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(len(val))
+	for _, r := range val {
+		// Only allow valid HTTP header field value bytes (ASCII 0x20 to 0x7E)
+		if r >= 0x20 && r <= 0x7E {
+			sb.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
 func applyAuth(req *http.Request, settings ProviderSettings) {
-	if strings.TrimSpace(settings.APIKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(settings.APIKey))
+	key := sanitizeHeaderValue(settings.APIKey)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 }
 
