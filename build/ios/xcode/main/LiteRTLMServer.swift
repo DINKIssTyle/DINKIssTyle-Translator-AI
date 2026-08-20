@@ -11,12 +11,26 @@ private actor DKSTLiteRTEngine {
   }
 
   func configure(modelPath: String) throws {
-    guard modelPath.lowercased().hasSuffix(".litertlm"),
-      FileManager.default.fileExists(atPath: modelPath)
-    else {
-      throw NSError(domain: "DKSTLiteRTLM", code: 2, userInfo: [NSLocalizedDescriptionKey: "modelPath must reference an existing .litertlm file"])
+    guard modelPath.lowercased().hasSuffix(".litertlm") else {
+      throw NSError(domain: "DKSTLiteRTLM", code: 2, userInfo: [NSLocalizedDescriptionKey: "modelPath must reference a .litertlm file"])
     }
-    configuredModelURL = URL(fileURLWithPath: modelPath)
+    var targetURL = URL(fileURLWithPath: modelPath)
+    if !FileManager.default.fileExists(atPath: targetURL.path) {
+      if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+        let candidate = docs.appendingPathComponent("models").appendingPathComponent(targetURL.lastPathComponent)
+        if FileManager.default.fileExists(atPath: candidate.path) {
+          targetURL = candidate
+        }
+      }
+      if !FileManager.default.fileExists(atPath: targetURL.path),
+         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        let candidate = appSupport.appendingPathComponent("DKST Translator AI").appendingPathComponent("models").appendingPathComponent(targetURL.lastPathComponent)
+        if FileManager.default.fileExists(atPath: candidate.path) {
+          targetURL = candidate
+        }
+      }
+    }
+    configuredModelURL = targetURL
     if let engine { litert_lm_engine_delete(engine) }
     engine = nil
   }
@@ -235,15 +249,20 @@ private final class DKSTLiteRTLMServer {
       }
       return
     }
-    if requestLine.hasPrefix("POST /configure "),
-      let bodyStart = text.range(of: "\r\n\r\n")?.upperBound,
-      let bodyData = String(text[bodyStart...]).data(using: .utf8),
-      let payload = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-      let modelPath = payload["modelPath"] as? String
-    {
+    if requestLine.hasPrefix("POST /configure") {
+      let bodyData: Data
+      if let boundary = data.range(of: Data("\r\n\r\n".utf8)) {
+        bodyData = data.subdata(in: boundary.upperBound..<data.count)
+      } else {
+        bodyData = Data()
+      }
+      let payload = (try? JSONSerialization.jsonObject(with: bodyData)) as? [String: Any]
+      let modelPath = (payload?["modelPath"] as? String) ?? ""
       Task {
         do {
-          try await runtime.configure(modelPath: modelPath)
+          if !modelPath.isEmpty {
+            try await runtime.configure(modelPath: modelPath)
+          }
           send(connection, status: "204 No Content", type: "text/plain", body: Data())
         } catch {
           sendJSON(connection, ["error": ["message": error.localizedDescription]], status: "400 Bad Request")
@@ -251,16 +270,19 @@ private final class DKSTLiteRTLMServer {
       }
       return
     }
-    guard requestLine.hasPrefix("POST /v1/chat/completions "),
-      let bodyStart = text.range(of: "\r\n\r\n")?.upperBound,
-      let bodyData = String(text[bodyStart...]).data(using: .utf8),
-      let payload = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-      let messages = payload["messages"] as? [[String: Any]],
-      let prompt = messages.last?["content"] as? String
-    else {
+    guard requestLine.hasPrefix("POST /v1/chat/completions") else {
       send(connection, status: "404 Not Found", type: "text/plain", body: Data("not found".utf8))
       return
     }
+    let bodyData: Data
+    if let boundary = data.range(of: Data("\r\n\r\n".utf8)) {
+      bodyData = data.subdata(in: boundary.upperBound..<data.count)
+    } else {
+      bodyData = Data()
+    }
+    let payload = (try? JSONSerialization.jsonObject(with: bodyData)) as? [String: Any]
+    let messages = payload?["messages"] as? [[String: Any]]
+    let prompt = messages?.last?["content"] as? String ?? ""
 
     Task {
       do {

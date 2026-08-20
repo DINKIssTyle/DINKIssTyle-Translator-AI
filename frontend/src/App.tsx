@@ -5791,29 +5791,22 @@ function App() {
 
                                             {/* Storage & Import Card */}
                                             <div className="settings-card-group">
-                                                <div className="settings-card-header">
+                                                <div className="settings-card-header settings-import-card-header">
                                                     <span className="material-symbols-outlined">folder_managed</span>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
                                                         <div className="settings-card-title">Model Storage & Import</div>
-                                                        <div className="settings-card-subtitle">Local directory where .litertlm models are saved and discovered.</div>
+                                                        <div className="settings-card-subtitle">Import external .litertlm model files into local storage.</div>
                                                     </div>
                                                     <button
                                                         type="button"
-                                                        className="btn btn-primary btn-small"
-                                                        style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                                                        className="btn btn-primary btn-small settings-import-btn"
                                                         onClick={handleImportLiteRTModel}
                                                         disabled={isImportingModel}
                                                     >
                                                         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>upload_file</span>
-                                                        {isImportingModel ? "Importing..." : "Import Model"}
+                                                        <span>{isImportingModel ? "Importing..." : "Import Model"}</span>
                                                     </button>
                                                 </div>
-                                                {modelsStorageDir && (
-                                                    <div className="litert-storage-badge" title={modelsStorageDir} style={{ marginTop: 8 }}>
-                                                        <span className="material-symbols-outlined">folder_open</span>
-                                                        <span className="litert-storage-path">Storage: <strong>{modelsStorageDir}</strong></span>
-                                                    </div>
-                                                )}
                                             </div>
 
                                             {/* Local Installed Models Card */}
