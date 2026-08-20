@@ -1844,8 +1844,8 @@ textarea {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(8px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -2198,12 +2198,13 @@ textarea {
   max-height: min(88vh, 660px);
   display: flex;
   flex-direction: column;
-  background: var(--surface-card);
+  background: var(--surface-strong);
   border: 1px solid var(--line);
   border-radius: 16px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   position: relative;
+  opacity: 1;
 }
 
 /* Modal Header */
@@ -2213,7 +2214,7 @@ textarea {
   justify-content: space-between;
   padding: 16px 20px 14px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface-header);
+  background: var(--surface-muted);
   flex-shrink: 0;
 }
 
@@ -2268,7 +2269,7 @@ textarea {
 }
 
 .settings-modal-close-btn:hover {
-  background: var(--ui-chip-bg);
+  background: var(--ui-chip-bg-hover);
   color: var(--text-main);
 }
 
@@ -2283,6 +2284,7 @@ textarea {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  background: var(--surface-strong);
 }
 
 /* Sidebar Navigation Tabs */
@@ -2290,7 +2292,7 @@ textarea {
   width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--line);
-  background: var(--bg-sidebar, rgba(0, 0, 0, 0.12));
+  background: var(--surface-muted);
   padding: 12px 10px;
   display: flex;
   flex-direction: column;
@@ -2314,14 +2316,15 @@ textarea {
 }
 
 .settings-tab-btn:hover {
-  background: var(--ui-chip-bg);
+  background: var(--surface-strong);
   color: var(--text-main);
 }
 
 .settings-tab-btn.is-active {
-  background: rgba(47, 124, 246, 0.15);
+  background: var(--surface-strong);
   color: var(--accent);
-  border-color: rgba(47, 124, 246, 0.25);
+  border-color: rgba(47, 124, 246, 0.3);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
   font-weight: 600;
 }
 
@@ -2355,7 +2358,7 @@ textarea {
 
 .settings-tab-btn.is-active .settings-tab-desc {
   color: var(--accent);
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 /* Content Pane */
@@ -2364,7 +2367,7 @@ textarea {
   min-width: 0;
   padding: 20px 24px;
   overflow-y: auto;
-  background: var(--surface-pane);
+  background: var(--surface-strong);
 }
 
 .settings-section-view {
@@ -2400,7 +2403,7 @@ textarea {
 
 /* Card Groups */
 .settings-card-group {
-  background: var(--ui-card-bg, rgba(255, 255, 255, 0.03));
+  background: var(--surface-muted);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 16px;
@@ -2458,7 +2461,7 @@ textarea {
   min-height: 36px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: var(--ui-chip-bg);
+  background: var(--surface-strong);
   border: 1px solid var(--line);
   color: var(--text-main);
   font-size: 0.88rem;
@@ -2519,7 +2522,7 @@ textarea {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: var(--ui-chip-bg);
+  background: var(--surface-strong);
   color: var(--text-main);
   font-size: 0.85rem;
   font-weight: 500;
@@ -2528,12 +2531,12 @@ textarea {
 }
 
 .settings-theme-pill:hover {
-  background: var(--ui-chip-bg-hover, rgba(255, 255, 255, 0.08));
+  border-color: var(--accent);
 }
 
 .settings-theme-pill.is-selected {
   border-color: var(--accent);
-  background: rgba(47, 124, 246, 0.15);
+  background: rgba(47, 124, 246, 0.12);
   color: var(--accent);
   font-weight: 600;
 }
@@ -2564,7 +2567,7 @@ textarea {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--line-strong, rgba(255, 255, 255, 0.18));
+  background-color: var(--line-strong);
   transition: .2s;
   border-radius: 24px;
 }
@@ -2600,7 +2603,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-strong);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px 14px;
@@ -2630,7 +2633,7 @@ textarea {
   width: 100%;
   height: 7px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--line);
   overflow: hidden;
 }
 
@@ -2660,7 +2663,7 @@ textarea {
 .settings-field-compact input {
   padding: 6px 10px;
   border-radius: 6px;
-  background: var(--ui-chip-bg);
+  background: var(--surface-strong);
   border: 1px solid var(--line);
   color: var(--text-main);
   font-size: 0.84rem;
@@ -2711,7 +2714,7 @@ textarea {
   flex-direction: column;
   padding: 8px 12px;
   border-radius: 8px;
-  background: var(--ui-chip-bg);
+  background: var(--surface-strong);
   border: 1px solid var(--line);
 }
 
@@ -2727,6 +2730,56 @@ textarea {
   margin-top: 2px;
 }
 
+/* Remote AI Sub-tabs */
+.settings-remote-provider-tabs {
+  display: flex;
+  gap: 8px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.settings-remote-provider-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-remote-provider-tab:hover {
+  color: var(--text-main);
+  background: var(--ui-chip-bg-hover);
+}
+
+.settings-remote-provider-tab.is-active {
+  background: var(--surface-strong);
+  color: var(--accent);
+  border-color: var(--line);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.settings-mini-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(47, 124, 246, 0.15);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* Modal Footer */
 .settings-modal-footer {
   display: flex;
@@ -2734,7 +2787,7 @@ textarea {
   justify-content: space-between;
   padding: 12px 20px;
   border-top: 1px solid var(--line);
-  background: var(--surface-header);
+  background: var(--surface-muted);
   flex-shrink: 0;
 }
 

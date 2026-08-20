@@ -309,6 +309,12 @@ func resolveFromHFRepo(repo string, token string) (string, string, error) {
 	if resp.StatusCode == http.StatusOK {
 		var info hfModelInfo
 		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && len(info.Siblings) > 0 {
+			// First pass: prefer standard CPU model (without -gpu) for desktop compatibility
+			for _, s := range info.Siblings {
+				if strings.EqualFold(filepath.Ext(s.Rfilename), ".litertlm") && !strings.Contains(strings.ToLower(s.Rfilename), "-gpu") {
+					return fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repo, s.Rfilename), filepath.Base(s.Rfilename), nil
+				}
+			}
 			for _, s := range info.Siblings {
 				if strings.EqualFold(filepath.Ext(s.Rfilename), ".litertlm") {
 					return fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repo, s.Rfilename), filepath.Base(s.Rfilename), nil

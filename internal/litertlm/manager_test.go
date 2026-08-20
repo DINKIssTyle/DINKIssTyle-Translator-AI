@@ -16,8 +16,8 @@ func TestValidateModelPath(t *testing.T) {
 
 func TestNormalizeConfig(t *testing.T) {
 	config := normalizeConfig(Config{RuntimeMode: "SERVER", Port: 70000})
-	if config.RuntimeMode != "server" {
-		t.Fatalf("runtime mode = %q, want server", config.RuntimeMode)
+	if config.RuntimeMode != "ondevice" {
+		t.Fatalf("runtime mode = %q, want ondevice", config.RuntimeMode)
 	}
 	if config.Port != 9379 {
 		t.Fatalf("port = %d, want 9379", config.Port)

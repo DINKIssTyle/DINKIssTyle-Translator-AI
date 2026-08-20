@@ -1382,6 +1382,16 @@ function App() {
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [showModelModal, setShowModelModal] = useState(false);
     const [settingsActiveTab, setSettingsActiveTab] = useState<'appearance' | 'translation' | 'litert' | 'remote_ai' | 'webserver' | 'about'>('translation');
+    const [remoteAISubTab, setRemoteAISubTab] = useState<"openai" | "lmstudio">(() => {
+        return (storedSettings?.providerMode === "openai" || storedSettings?.providerMode === "lmstudio")
+            ? (storedSettings.providerMode as "openai" | "lmstudio")
+            : "openai";
+    });
+    const [remoteModelsMap, setRemoteModelsMap] = useState<Record<"openai" | "lmstudio", ModelInfo[]>>({
+        openai: [],
+        lmstudio: [],
+    });
+    const [isLoadingRemoteModels, setIsLoadingRemoteModels] = useState(false);
     const [showModelPopover, setShowModelPopover] = useState(false);
     const [showEnhancedContextModal, setShowEnhancedContextModal] = useState(false);
     const [enhancedContextDraftEnabled, setEnhancedContextDraftEnabled] = useState(false);
@@ -4202,6 +4212,80 @@ function App() {
         void fetchModels(nextSettings);
     };
 
+    const updateRemoteProfile = (mode: "openai" | "lmstudio", updates: Partial<ProviderProfile>) => {
+        const current = providerProfiles[mode] || DEFAULT_PROVIDER_PROFILES[mode];
+        const nextProfile: ProviderProfile = { ...current, ...updates };
+        const nextProfiles = { ...providerProfiles, [mode]: nextProfile };
+        setProviderProfiles(nextProfiles);
+
+        if (providerSettings.mode === mode) {
+            const nextSettings: ProviderSettings = {
+                ...providerSettings,
+                ...updates,
+            };
+            setProviderSettings(nextSettings);
+            persistSettings(
+                nextSettings.model,
+                nextSettings,
+                fastTranslationEnabled,
+                editorFontSize,
+                sourceLang,
+                targetLang,
+                showDebugPanel,
+                instruction,
+                themeMode,
+                nextProfiles
+            );
+        } else {
+            persistSettings(
+                providerSettings.model,
+                providerSettings,
+                fastTranslationEnabled,
+                editorFontSize,
+                sourceLang,
+                targetLang,
+                showDebugPanel,
+                instruction,
+                themeMode,
+                nextProfiles
+            );
+        }
+    };
+
+    const handleFetchRemoteModels = async (mode: "openai" | "lmstudio") => {
+        const profile = providerProfiles[mode] || DEFAULT_PROVIDER_PROFILES[mode];
+        const testSettings: ProviderSettings = {
+            ...providerSettings,
+            mode: mode,
+            endpoint: profile.endpoint || DEFAULT_PROVIDER_PROFILES[mode].endpoint,
+            apiKey: profile.apiKey || "",
+            model: profile.model || "",
+        };
+        setIsLoadingRemoteModels(true);
+        setSettingsStatus(`Testing connection to ${mode === "openai" ? "OpenAI" : "LM Studio"}...`);
+        try {
+            const list = isBrowserMode
+                ? await callBrowserJSON<ModelInfo[]>("/api/models", { method: "GET" })
+                : await GetModels(testSettings) as ModelInfo[];
+            setRemoteModelsMap(prev => ({ ...prev, [mode]: list || [] }));
+            if (providerSettings.mode === mode) {
+                setModels(list || []);
+            }
+            if (list && list.length > 0) {
+                setSettingsStatus(`Found ${list.length} models for ${mode === "openai" ? "OpenAI" : "LM Studio"}.`);
+                showSavedToastMessage(`Loaded ${list.length} models`);
+            } else {
+                setSettingsStatus(`Connected to ${mode === "openai" ? "OpenAI" : "LM Studio"}, but model list is empty.`);
+            }
+        } catch (err: any) {
+            console.error(`Failed to fetch models for ${mode}:`, err);
+            setSettingsStatus(`Connection failed: ${String(err)}`);
+            showSavedToastMessage(`Connection failed: ${String(err)}`);
+        } finally {
+            setIsLoadingRemoteModels(false);
+        }
+    };
+
     const handleCloseEnhancedContextModal = () => {
         setProviderSettings(prev => ({
             ...prev,
@@ -4502,9 +4586,14 @@ function App() {
                                                                     <span className="model-popover-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                                                         {m.name}
                                                                     </span>
-                                                                    <span style={{ fontSize: "0.72rem", color: "var(--text-soft)", flexShrink: 0 }}>
-                                                                        {formatModelSize(m.sizeBytes)}
-                                                                    </span>
+                                                                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                                                        {m.name.toLowerCase().includes("-gpu") && (
+                                                                            <span style={{ fontSize: "0.65rem", color: "var(--text-soft)", padding: "1px 4px", borderRadius: 3, background: "var(--line)" }}>GPU</span>
+                                                                        )}
+                                                                        <span style={{ fontSize: "0.72rem", color: "var(--text-soft)" }}>
+                                                                            {formatModelSize(m.sizeBytes)}
+                                                                        </span>
+                                                                    </div>
                                                                 </div>
                                                                 {isSelected && (
                                                                     <span className="material-symbols-outlined model-popover-check">check</span>
@@ -5447,9 +5536,9 @@ function App() {
                                         className={`settings-tab-btn ${settingsActiveTab === 'remote_ai' ? 'is-active' : ''}`}
                                         onClick={() => setSettingsActiveTab('remote_ai')}
                                     >
-                                        <span className="material-symbols-outlined settings-tab-icon">smart_toy</span>
+                                        <span className="material-symbols-outlined settings-tab-icon">settings_input_component</span>
                                         <div className="settings-tab-label-group">
-                                            <span className="settings-tab-title">Remote AI</span>
+                                            <span className="settings-tab-title">LLM Configuration</span>
                                             <span className="settings-tab-desc">OpenAI & LM Studio</span>
                                         </div>
                                     </button>
@@ -5579,44 +5668,7 @@ function App() {
                                             <div className="settings-section-header">
                                                 <span className="settings-section-eyebrow">TRANSLATION ENGINE</span>
                                                 <h2 className="settings-section-title">Translation</h2>
-                                                <p className="settings-section-subtitle">Configure primary translation mode, smart chunking, and post-editing.</p>
-                                            </div>
-
-                                            <div className="settings-card-group">
-                                                <div className="settings-card-header">
-                                                    <span className="material-symbols-outlined">swap_horiz</span>
-                                                    <div>
-                                                        <div className="settings-card-title">Default Translation Mode</div>
-                                                        <div className="settings-card-subtitle">Select on-device native translator or LLM provider.</div>
-                                                    </div>
-                                                </div>
-                                                <div className="settings-field-full">
-                                                    <select
-                                                        className="settings-select-styled"
-                                                        value={providerSettings.mode}
-                                                        onChange={e => handleSwitchProviderMode(e.target.value as ProviderMode)}
-                                                    >
-                                                        <option value="litertlm">LiteRT-LM (On-device)</option>
-                                                        {isApplePlatform && <option value="apple">Apple Translation (On-device)</option>}
-                                                        {isMLKitPlatform && <option value="google-mlkit">Google Translation (ML Kit)</option>}
-                                                        <option value="openai">OpenAI</option>
-                                                        <option value="lmstudio">LM Studio (Local server)</option>
-                                                    </select>
-                                                </div>
-
-                                                {isNativeMode && (
-                                                    <div className="native-translation-banner" style={{ marginTop: 12 }}>
-                                                        <div className="native-translation-badge">
-                                                            <span className="material-symbols-outlined">{providerSettings.mode === "apple" ? "translate" : "smart_toy"}</span>
-                                                            <span className="native-translation-name">{providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"}</span>
-                                                        </div>
-                                                        <div className="native-translation-desc">
-                                                            {providerSettings.mode === "apple"
-                                                                ? "Translates instantly in a single pass on-device using Apple Translation framework. (Supported: macOS 15+, iOS 18+, iPadOS 18+)"
-                                                                : "Translates instantly on-device using Google ML Kit. (Supported: Android 6.0+, iOS 15.5+, iPadOS 15.5+)"}
-                                                        </div>
-                                                    </div>
-                                                )}
+                                                <p className="settings-section-subtitle">Configure smart chunking, sentence splitting, and context-aware post-editing.</p>
                                             </div>
 
                                             <div className="settings-card-group">
@@ -5750,6 +5802,9 @@ function App() {
                                                                             <span className="litert-model-name" title={m.name}>{m.name}</span>
                                                                             <div className="litert-model-meta">
                                                                                 <span className="litert-model-size-badge">{formatModelSize(m.sizeBytes)}</span>
+                                                                                {m.name.toLowerCase().includes("-gpu") && (
+                                                                                    <span className="litert-model-size-badge" style={{ color: "var(--text-soft)", opacity: 0.85 }}>Mobile GPU</span>
+                                                                                )}
                                                                                 {isSelected && <span className="litert-model-badge-active">Active</span>}
                                                                             </div>
                                                                         </div>
@@ -5888,142 +5943,148 @@ function App() {
                                                     )}
                                                 </div>
                                             </div>
-
-                                            {/* Advanced Runtime Options Card */}
-                                            <div className="settings-card-group">
-                                                <div className="settings-card-header">
-                                                    <span className="material-symbols-outlined">settings_suggest</span>
-                                                    <div>
-                                                        <div className="settings-card-title">Runtime & Network Options</div>
-                                                        <div className="settings-card-subtitle">Configure on-device runner port and optional execution mode.</div>
-                                                    </div>
-                                                </div>
-                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
-                                                    <label className="settings-field-label">Runtime Mode</label>
-                                                    <select
-                                                        className="settings-select-styled"
-                                                        value={providerSettings.liteRTRuntimeMode}
-                                                        onChange={e => setProviderSettings(prev => ({
-                                                            ...prev,
-                                                            liteRTRuntimeMode: e.target.value as "ondevice" | "server",
-                                                            model: "",
-                                                        }))}
-                                                    >
-                                                        <option value="ondevice">On-device only</option>
-                                                        <option value="server" disabled={isMobilePlatform}>On-device + OpenAI server (desktop)</option>
-                                                    </select>
-                                                </div>
-                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
-                                                    <label className="settings-field-label">Runtime Port</label>
-                                                    <input
-                                                        type="text"
-                                                        inputMode="numeric"
-                                                        pattern="[0-9]*"
-                                                        className="settings-input-styled"
-                                                        value={providerSettings.liteRTPort}
-                                                        onChange={e => {
-                                                            const port = Math.max(1, Math.min(65535, Number(e.target.value.replace(/[^\d]/g, "")) || 9379));
-                                                            setProviderSettings(prev => ({
-                                                                ...prev,
-                                                                liteRTPort: port,
-                                                                endpoint: `http://127.0.0.1:${port}`,
-                                                                model: "",
-                                                            }));
-                                                        }}
-                                                    />
-                                                </div>
-                                                <div className="settings-field-full">
-                                                    <label className="settings-field-label">Runtime Binary (Optional Override)</label>
-                                                    <input
-                                                        type="text"
-                                                        className="settings-input-styled"
-                                                        value={providerSettings.liteRTRuntimePath}
-                                                        onChange={e => setProviderSettings(prev => ({
-                                                            ...prev,
-                                                            liteRTRuntimePath: e.target.value,
-                                                            model: "",
-                                                        }))}
-                                                        placeholder="Bundled runtime"
-                                                    />
-                                                </div>
-                                            </div>
                                         </div>
                                     )}
 
-                                    {/* --- Tab 4: Remote AI --- */}
-                                    {settingsActiveTab === 'remote_ai' && (
-                                        <div className="settings-section-view">
-                                            <div className="settings-section-header">
-                                                <span className="settings-section-eyebrow">API INTEGRATION</span>
-                                                <h2 className="settings-section-title">Remote AI Models</h2>
-                                                <p className="settings-section-subtitle">Connect to OpenAI compatible API endpoints or local LM Studio servers.</p>
-                                            </div>
+                                    {/* --- Tab 4: Remote AI (OpenAI & LM Studio) --- */}
+                                    {settingsActiveTab === 'remote_ai' && (() => {
+                                        const activeRemoteMode = remoteAISubTab;
+                                        const currentProfile = providerProfiles[activeRemoteMode] || DEFAULT_PROVIDER_PROFILES[activeRemoteMode];
+                                        const isCurrentlyActiveEngine = providerSettings.mode === activeRemoteMode;
+                                        const availableRemoteModels = remoteModelsMap[activeRemoteMode]?.length > 0
+                                            ? remoteModelsMap[activeRemoteMode]
+                                            : (isCurrentlyActiveEngine ? models : []);
 
-                                            <div className="settings-card-group">
-                                                <div className="settings-card-header">
-                                                    <span className="material-symbols-outlined">link</span>
-                                                    <div>
-                                                        <div className="settings-card-title">Endpoint & Authentication</div>
-                                                        <div className="settings-card-subtitle">Set the base URL and API authorization token.</div>
-                                                    </div>
+                                        return (
+                                            <div className="settings-section-view">
+                                                <div className="settings-section-header">
+                                                    <span className="settings-section-eyebrow">API INTEGRATION</span>
+                                                    <h2 className="settings-section-title">LLM Configuration</h2>
+                                                    <p className="settings-section-subtitle">
+                                                        Configure OpenAI and LM Studio connection endpoints, API keys, and target models.
+                                                    </p>
                                                 </div>
-                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
-                                                    <label className="settings-field-label">Endpoint URL</label>
-                                                    <input
-                                                        type="text"
-                                                        className="settings-input-styled"
-                                                        value={providerSettings.endpoint}
-                                                        onChange={e => setProviderSettings(prev => ({ ...prev, endpoint: e.target.value }))}
-                                                        placeholder="http://127.0.0.1:1234 or https://api.openai.com/v1"
-                                                    />
-                                                </div>
-                                                <div className="settings-field-full">
-                                                    <label className="settings-field-label">API Key</label>
-                                                    <input
-                                                        type="password"
-                                                        className="settings-input-styled"
-                                                        value={providerSettings.apiKey}
-                                                        onChange={e => setProviderSettings(prev => ({ ...prev, apiKey: e.target.value }))}
-                                                        placeholder="sk-... or api token"
-                                                    />
-                                                </div>
-                                            </div>
 
-                                            <div className="settings-card-group">
-                                                <div className="settings-card-header">
-                                                    <span className="material-symbols-outlined">token</span>
-                                                    <div style={{ flex: 1 }}>
-                                                        <div className="settings-card-title">Model Selection</div>
-                                                        <div className="settings-card-subtitle">Choose the target LLM model served at the endpoint.</div>
-                                                    </div>
+                                                {/* Provider Switcher Segment Pills */}
+                                                <div className="settings-remote-provider-tabs">
                                                     <button
                                                         type="button"
-                                                        className="icon-btn"
-                                                        onClick={() => fetchModels()}
-                                                        disabled={isLoadingModels}
-                                                        title="Refresh Models"
+                                                        className={`settings-remote-provider-tab ${activeRemoteMode === 'openai' ? 'is-active' : ''}`}
+                                                        onClick={() => setRemoteAISubTab('openai')}
                                                     >
-                                                        <span className="material-symbols-outlined">refresh</span>
+                                                        <span className="material-symbols-outlined">smart_toy</span>
+                                                        <span>OpenAI</span>
+                                                        {providerSettings.mode === 'openai' && <span className="settings-mini-badge">Active</span>}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className={`settings-remote-provider-tab ${activeRemoteMode === 'lmstudio' ? 'is-active' : ''}`}
+                                                        onClick={() => setRemoteAISubTab('lmstudio')}
+                                                    >
+                                                        <span className="material-symbols-outlined">terminal</span>
+                                                        <span>LM Studio</span>
+                                                        {providerSettings.mode === 'lmstudio' && <span className="settings-mini-badge">Active</span>}
                                                     </button>
                                                 </div>
-                                                <div className="settings-field-full">
-                                                    <select
-                                                        className="settings-select-styled"
-                                                        value={providerSettings.model}
-                                                        onChange={e => handleSelectModel(e.target.value)}
-                                                        disabled={isLoadingModels}
-                                                    >
-                                                        <option value="">Select a Model</option>
-                                                        {models.map(model => (
-                                                            <option key={model.id} value={model.id}>
-                                                                {model.displayName || model.id}
-                                                            </option>
-                                                        ))}
-                                                    </select>
+
+                                                {/* Endpoint & API Key Card */}
+                                                <div className="settings-card-group">
+                                                    <div className="settings-card-header">
+                                                        <span className="material-symbols-outlined">link</span>
+                                                        <div>
+                                                            <div className="settings-card-title">Endpoint & Authentication</div>
+                                                            <div className="settings-card-subtitle">
+                                                                {activeRemoteMode === 'openai'
+                                                                    ? 'Specify API host (default: https://api.openai.com/v1) and your secret API Key.'
+                                                                    : 'Specify LM Studio server endpoint (default: http://127.0.0.1:1234) and optional API token.'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="settings-field-full" style={{ marginBottom: 10 }}>
+                                                        <label className="settings-field-label">Endpoint URL</label>
+                                                        <input
+                                                            type="text"
+                                                            className="settings-input-styled"
+                                                            value={currentProfile.endpoint || (activeRemoteMode === 'openai' ? 'https://api.openai.com/v1' : 'http://127.0.0.1:1234')}
+                                                            onChange={e => updateRemoteProfile(activeRemoteMode, { endpoint: e.target.value })}
+                                                            placeholder={activeRemoteMode === 'openai' ? 'https://api.openai.com/v1' : 'http://127.0.0.1:1234'}
+                                                        />
+                                                    </div>
+                                                    <div className="settings-field-full">
+                                                        <label className="settings-field-label">
+                                                            API Key {activeRemoteMode === 'openai' ? '(Required)' : '(Optional)'}
+                                                        </label>
+                                                        <input
+                                                            type="password"
+                                                            className="settings-input-styled"
+                                                            value={currentProfile.apiKey || ''}
+                                                            onChange={e => updateRemoteProfile(activeRemoteMode, { apiKey: e.target.value })}
+                                                            placeholder={activeRemoteMode === 'openai' ? 'sk-...' : 'Optional for local server'}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {/* Model Selection Card */}
+                                                <div className="settings-card-group">
+                                                    <div className="settings-card-header">
+                                                        <span className="material-symbols-outlined">token</span>
+                                                        <div style={{ flex: 1 }}>
+                                                            <div className="settings-card-title">Model Selection</div>
+                                                            <div className="settings-card-subtitle">
+                                                                Choose or test the target LLM model hosted at this endpoint.
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-secondary btn-small"
+                                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                                            onClick={() => handleFetchRemoteModels(activeRemoteMode)}
+                                                            disabled={isLoadingRemoteModels}
+                                                            title="Fetch available models from endpoint"
+                                                        >
+                                                            <span className={`material-symbols-outlined ${isLoadingRemoteModels ? 'rotating' : ''}`} style={{ fontSize: 16 }}>
+                                                                refresh
+                                                            </span>
+                                                            {isLoadingRemoteModels ? 'Checking...' : 'Refresh Models'}
+                                                        </button>
+                                                    </div>
+                                                    <div className="settings-field-full">
+                                                        <label className="settings-field-label">Selected Model</label>
+                                                        <div style={{ display: 'flex', gap: 8 }}>
+                                                            {availableRemoteModels.length > 0 ? (
+                                                                <select
+                                                                    className="settings-select-styled"
+                                                                    value={currentProfile.model || ''}
+                                                                    onChange={e => {
+                                                                        const nextModelId = e.target.value;
+                                                                        updateRemoteProfile(activeRemoteMode, { model: nextModelId });
+                                                                        if (isCurrentlyActiveEngine) {
+                                                                            handleSelectModel(nextModelId);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <option value="">Select a Model</option>
+                                                                    {availableRemoteModels.map(model => (
+                                                                        <option key={model.id} value={model.id}>
+                                                                            {model.displayName || model.id}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            ) : (
+                                                                <input
+                                                                    type="text"
+                                                                    className="settings-input-styled"
+                                                                    value={currentProfile.model || ''}
+                                                                    onChange={e => updateRemoteProfile(activeRemoteMode, { model: e.target.value })}
+                                                                    placeholder={activeRemoteMode === 'openai' ? 'gpt-4o-mini' : 'model-identifier'}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    )}
+                                        );
+                                    })()}
 
                                     {/* --- Tab 5: Web Server (Desktop only) --- */}
                                     {settingsActiveTab === 'webserver' && !isMobilePlatform && (

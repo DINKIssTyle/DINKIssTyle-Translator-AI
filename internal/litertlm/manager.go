@@ -46,10 +46,7 @@ func (m *Manager) Close() error {
 func normalizeConfig(config Config) Config {
 	config.ModelPath = strings.TrimSpace(config.ModelPath)
 	config.RuntimePath = strings.TrimSpace(config.RuntimePath)
-	config.RuntimeMode = strings.ToLower(strings.TrimSpace(config.RuntimeMode))
-	if config.RuntimeMode != "server" {
-		config.RuntimeMode = "ondevice"
-	}
+	config.RuntimeMode = "ondevice"
 	if config.Port <= 0 || config.Port > 65535 {
 		config.Port = 9379
 	}

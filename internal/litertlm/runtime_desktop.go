@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,13 +25,29 @@ type processState struct {
 	modelID     string
 }
 
+func findFreePort(preferred int) int {
+	if preferred > 0 && preferred <= 65535 {
+		if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferred)); err == nil {
+			_ = l.Close()
+			return preferred
+		}
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 9379
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 func (m *Manager) ensurePlatform(ctx context.Context, config Config) (string, string, error) {
 	if config.ModelPath == "" {
 		config.ModelPath = findBundledModel()
 	}
-	endpoint := endpointForPort(config.Port)
+	port := findFreePort(config.Port)
+	endpoint := endpointForPort(port)
 	modelID := modelIDForPath(config.ModelPath)
-	fingerprint := strings.Join([]string{config.ModelPath, config.RuntimePath, config.RuntimeMode, strconv.Itoa(config.Port)}, "\x00")
+	fingerprint := strings.Join([]string{config.ModelPath, config.RuntimePath, strconv.Itoa(port)}, "\x00")
 	if m.process.cmd != nil && m.process.fingerprint == fingerprint {
 		if err := probeServer(ctx, endpoint); err == nil {
 			return endpoint, m.process.modelID, nil
@@ -49,11 +66,9 @@ func (m *Manager) ensurePlatform(ctx context.Context, config Config) (string, st
 		}
 	}
 
+	// Always bind to localhost on-device loopback (server feature disabled/ondevice only)
 	host := "127.0.0.1"
-	if config.RuntimeMode == "server" {
-		host = "0.0.0.0"
-	}
-	cmd := exec.Command(runtimePath, "serve", "--host", host, "--port", strconv.Itoa(config.Port))
+	cmd := exec.Command(runtimePath, "serve", "--host", host, "--port", strconv.Itoa(port))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -70,8 +85,9 @@ func (m *Manager) ensurePlatform(ctx context.Context, config Config) (string, st
 
 func findBundledModel() string {
 	if models, err := ListLocalModels(); err == nil && len(models) > 0 {
+		// On macOS and desktop platforms, CPU XNNPACK models (.litertlm without -gpu) work reliably
 		for _, m := range models {
-			if strings.Contains(strings.ToLower(m.Name), "-gpu") {
+			if !strings.Contains(strings.ToLower(m.Name), "-gpu") {
 				return m.Path
 			}
 		}
