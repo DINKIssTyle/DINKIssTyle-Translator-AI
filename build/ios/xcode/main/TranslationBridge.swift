@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import NaturalLanguage
 import Translation
-#if os(iOS) && canImport(MLKitTranslate)
+#if os(iOS) && !targetEnvironment(simulator) && canImport(MLKitTranslate)
 import MLKitTranslate
 #endif
 
@@ -476,7 +476,7 @@ public func DKSTAppleTranslationSubmit(
     }
 }
 
-#if os(iOS) && canImport(MLKitTranslate)
+#if os(iOS) && !targetEnvironment(simulator) && canImport(MLKitTranslate)
 @MainActor
 private final class GoogleTranslationJob {
     let id: UInt64
@@ -632,7 +632,7 @@ private final class GoogleTranslationBridge {
 
 @_cdecl("DKSTGoogleTranslationAvailable")
 public func DKSTGoogleTranslationAvailable() -> Int32 {
-#if os(iOS) && canImport(MLKitTranslate)
+#if os(iOS) && !targetEnvironment(simulator) && canImport(MLKitTranslate)
     return 1
 #else
     return 0
@@ -641,7 +641,7 @@ public func DKSTGoogleTranslationAvailable() -> Int32 {
 
 @_cdecl("DKSTGoogleTranslationCancel")
 public func DKSTGoogleTranslationCancel(_ requestID: UInt64) {
-#if os(iOS) && canImport(MLKitTranslate)
+#if os(iOS) && !targetEnvironment(simulator) && canImport(MLKitTranslate)
     Task { @MainActor in GoogleTranslationBridge.shared.cancel(requestID) }
 #endif
 }
@@ -653,7 +653,7 @@ public func DKSTGoogleTranslationSubmit(
     _ completion: DKSTTranslationCompletion?
 ) {
     guard let requestJSON, let completion else { return }
-#if os(iOS) && canImport(MLKitTranslate)
+#if os(iOS) && !targetEnvironment(simulator) && canImport(MLKitTranslate)
     let json = String(cString: requestJSON)
     guard let data = json.data(using: .utf8),
           let payload = try? JSONDecoder().decode(TranslationPayload.self, from: data) else {
@@ -665,7 +665,7 @@ public func DKSTGoogleTranslationSubmit(
         GoogleTranslationBridge.shared.submit(id: requestID, payload: payload, completion: completion)
     }
 #else
-    let error = #"{"texts":[],"error":"Google ML Kit is unavailable in this build"}"#
+    let error = #"{"texts":[],"error":"Google ML Kit is only supported on physical iOS devices"}"#
     error.withCString { completion(requestID, $0) }
 #endif
 }

@@ -251,6 +251,10 @@ func main() {
 		"/* Begin XCLocalSwiftPackageReference section */\n\t\tC0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference LiteRTLMNative */ = {isa = XCLocalSwiftPackageReference; relativePath = ../LiteRTLMNative; };\n/* End XCLocalSwiftPackageReference section */\n\n/* Begin XCSwiftPackageProductDependency section */\n\t\tC0DEBEEF0000000000000204 /* LiteRTLMNative */ = {isa = XCSwiftPackageProductDependency; package = C0DEBEEF0000000000000205 /* XCLocalSwiftPackageReference LiteRTLMNative */; productName = LiteRTLMNative; };\n/* End XCSwiftPackageProductDependency section */\n\n/* Begin XCBuildConfiguration section */")
 
 	// Prebuild script
+	oldPrebuildScript := `if [ ${PLATFORM} = iphonesimulator ]; then GO_TARGET=arm64-apple-ios15.0-simulator; MIN_FLAG=-mios-simulator-version-min=15.0; else GO_TARGET=arm64-apple-ios15.0; MIN_FLAG=-miphoneos-version-min=15.0; fi\nexport GOOS=ios\nexport GOARCH=arm64`
+	newPrebuildScript := `MIN_IOS_VERSION=${IPHONEOS_DEPLOYMENT_TARGET:-15.5}\nARCH_NAME=${CURRENT_ARCH:-${NATIVE_ARCH_ACTUAL:-arm64}}\nif [ \"${ARCH_NAME}\" = \"undefined_arch\" ] || [ -z \"${ARCH_NAME}\" ]; then\n  set -- ${ARCHS:-}\n  ARCH_NAME=${1:-${NATIVE_ARCH_ACTUAL:-arm64}}\nfi\ncase \"${ARCH_NAME}\" in\n  x86_64)\n    export GOARCH=amd64\n    TARGET_ARCH=x86_64\n    ;;\n  arm64|arm64e)\n    export GOARCH=arm64\n    TARGET_ARCH=arm64\n    ;;\n  *)\n    if [ \"${PLATFORM}\" = \"iphonesimulator\" ]; then\n      export GOARCH=amd64\n      TARGET_ARCH=x86_64\n    else\n      export GOARCH=arm64\n      TARGET_ARCH=arm64\n    fi\n    ;;\nesac\nif [ \"${PLATFORM}\" = \"iphonesimulator\" ]; then\n  GO_TARGET=\"${TARGET_ARCH}-apple-ios${MIN_IOS_VERSION}-simulator\"\n  MIN_FLAG=\"-mios-simulator-version-min=${MIN_IOS_VERSION}\"\nelse\n  GO_TARGET=\"${TARGET_ARCH}-apple-ios${MIN_IOS_VERSION}\"\n  MIN_FLAG=\"-miphoneos-version-min=${MIN_IOS_VERSION}\"\nfi\nexport GOOS=ios`
+	text = replaceOnce(text, oldPrebuildScript, newPrebuildScript)
+
 	text = replaceOnce(text,
 		`export CGO_LDFLAGS=\"-isysroot ${SDK_PATH} -target ${GO_TARGET}\"\ncd \"${APP_ROOT}\"`,
 		`export CGO_LDFLAGS=\"-isysroot ${SDK_PATH} -target ${GO_TARGET}\"\n# Xcode does not inherit the interactive shell PATH. Locate toolchains explicitly.\nexport PATH=\"/usr/local/go/bin:/opt/homebrew/bin:${HOME}/go/bin:${HOME}/.local/bin:${PATH}\"\nGO_BIN=\"${GO_BINARY:-}\"\nif [ -z \"${GO_BIN}\" ]; then GO_BIN=$(command -v go 2>/dev/null || true); fi\nif [ -z \"${GO_BIN}\" ] || [ ! -x \"${GO_BIN}\" ]; then\n  echo \"Go was not found. Install Go or set GO_BINARY to its absolute path in the Xcode scheme.\" >&2\n  exit 127\nfi\ncd \"${APP_ROOT}\"`)
@@ -272,7 +276,6 @@ func main() {
 				TARGETED_DEVICE_FAMILY = "1,2";
 				ONLY_ACTIVE_ARCH = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "$(inherited)";
 				SWIFT_VERSION = 5.0;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -280,9 +283,7 @@ func main() {
 					"@executable_path/Frameworks",
 				);`)
 
-	text = strings.ReplaceAll(text,
-		"OTHER_LDFLAGS = (\n\t\t\t\t\t\"$(inherited)\",\n\t\t\t\t\t\"-ObjC\",\n\t\t\t\t);",
-		"OTHER_LDFLAGS = (\n\t\t\t\t\t\"$(inherited)\",\n\t\t\t\t\t\"-ObjC\",\n\t\t\t\t\t\"-all_load\",\n\t\t\t\t);")
+	// Keep standard OTHER_LDFLAGS without -all_load so simulator does not force-load device frameworks
 
 	text = strings.ReplaceAll(text,
 		"IPHONEOS_DEPLOYMENT_TARGET = 15.0;",

@@ -1427,6 +1427,43 @@ function App() {
         return () => mediaQuery.removeEventListener("change", handleChange);
     }, []);
 
+    // Intercept raw clipboard paste events so WebKit/mobile browsers do not lowercase
+    // colon-prefixed text (such as API keys like "sk-lm-U9z1FDXG:...") as URI schemes
+    useEffect(() => {
+        const handlePaste = (event: ClipboardEvent) => {
+            const target = event.target as HTMLElement | null;
+            if (!target || !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+            if (target.readOnly || target.disabled) return;
+            if (target.type === 'file' || target.type === 'checkbox' || target.type === 'radio' || target.type === 'range') return;
+
+            const rawText = event.clipboardData?.getData('text/plain');
+            if (typeof rawText === 'string' && rawText.length > 0) {
+                event.preventDefault();
+                const start = target.selectionStart ?? target.value.length;
+                const end = target.selectionEnd ?? target.value.length;
+                const val = target.value;
+                const nextVal = val.slice(0, start) + rawText + val.slice(end);
+
+                // Use the prototype descriptor setter so React's synthetic event tracker registers the change
+                const prototype = target instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+                const nativeSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+                if (nativeSetter) {
+                    nativeSetter.call(target, nextVal);
+                } else {
+                    target.value = nextVal;
+                }
+                target.selectionStart = target.selectionEnd = start + rawText.length;
+                target.dispatchEvent(new Event('input', { bubbles: true }));
+                target.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        };
+
+        document.addEventListener('paste', handlePaste, true);
+        return () => {
+            document.removeEventListener('paste', handlePaste, true);
+        };
+    }, []);
+
     const effectiveTheme: "light" | "dark" = themeMode === "auto" ? (systemPrefersDark ? "dark" : "light") : themeMode;
 
     useEffect(() => {
@@ -5974,7 +6011,6 @@ function App() {
                                                     >
                                                         <span className="material-symbols-outlined">smart_toy</span>
                                                         <span>OpenAI</span>
-                                                        {providerSettings.mode === 'openai' && <span className="settings-mini-badge">Active</span>}
                                                     </button>
                                                     <button
                                                         type="button"
@@ -5983,7 +6019,6 @@ function App() {
                                                     >
                                                         <span className="material-symbols-outlined">terminal</span>
                                                         <span>LM Studio</span>
-                                                        {providerSettings.mode === 'lmstudio' && <span className="settings-mini-badge">Active</span>}
                                                     </button>
                                                 </div>
 
@@ -6008,6 +6043,11 @@ function App() {
                                                             value={currentProfile.endpoint || (activeRemoteMode === 'openai' ? 'https://api.openai.com/v1' : 'http://127.0.0.1:1234')}
                                                             onChange={e => updateRemoteProfile(activeRemoteMode, { endpoint: e.target.value })}
                                                             placeholder={activeRemoteMode === 'openai' ? 'https://api.openai.com/v1' : 'http://127.0.0.1:1234'}
+                                                            autoCapitalize="none"
+                                                            autoComplete="off"
+                                                            autoCorrect="off"
+                                                            spellCheck={false}
+                                                            inputMode="text"
                                                         />
                                                     </div>
                                                     <div className="settings-field-full">
@@ -6020,6 +6060,11 @@ function App() {
                                                             value={currentProfile.apiKey || ''}
                                                             onChange={e => updateRemoteProfile(activeRemoteMode, { apiKey: e.target.value })}
                                                             placeholder={activeRemoteMode === 'openai' ? 'sk-...' : 'Optional for local server'}
+                                                            autoCapitalize="none"
+                                                            autoComplete="off"
+                                                            autoCorrect="off"
+                                                            spellCheck={false}
+                                                            inputMode="text"
                                                         />
                                                     </div>
                                                 </div>
@@ -6077,6 +6122,11 @@ function App() {
                                                                     value={currentProfile.model || ''}
                                                                     onChange={e => updateRemoteProfile(activeRemoteMode, { model: e.target.value })}
                                                                     placeholder={activeRemoteMode === 'openai' ? 'gpt-4o-mini' : 'model-identifier'}
+                                                                    autoCapitalize="none"
+                                                                    autoComplete="off"
+                                                                    autoCorrect="off"
+                                                                    spellCheck={false}
+                                                                    inputMode="text"
                                                                 />
                                                             )}
                                                         </div>
@@ -6271,7 +6321,10 @@ function App() {
 
                             {/* Footer Action Bar */}
                             <div className="settings-modal-footer">
-                                <div className="settings-footer-status">
+                                <div
+                                    className={`settings-footer-status ${settingsStatus && (settingsStatus.toLowerCase().includes('fail') || settingsStatus.toLowerCase().includes('error') || settingsStatus.toLowerCase().includes('could not')) ? 'is-error' : ''}`}
+                                    title={settingsStatus || "All preferences are saved automatically"}
+                                >
                                     {settingsStatus || "All preferences are saved automatically"}
                                 </div>
                                 <div className="settings-footer-actions">

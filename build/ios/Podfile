@@ -17,7 +17,20 @@ post_install do |installer|
   end
   Dir.glob("#{installer.sandbox.target_support_files_root}/**/*.xcconfig").each do |xcconfig_file|
     content = File.read(xcconfig_file)
-    new_content = content.gsub(/EXCLUDED_ARCHS\[sdk=iphonesimulator\*\]\s*=\s*arm64/, 'EXCLUDED_ARCHS[sdk=iphonesimulator*] = ')
+    new_content = content.gsub(/EXCLUDED_ARCHS\[sdk=iphonesimulator\*\]\s*=\s*arm64/, '')
+    if new_content.include?('OTHER_LDFLAGS =')
+      sim_ldflags = new_content[/OTHER_LDFLAGS = (.*)/, 1]
+      if sim_ldflags
+        sim_clean = sim_ldflags.gsub(/-framework "(MLKitCommon|MLKitNaturalLanguage|MLKitTranslate)"/, '')
+        new_content = new_content.gsub(/OTHER_LDFLAGS = .*/, "OTHER_LDFLAGS[sdk=iphoneos*] = #{sim_ldflags}\nOTHER_LDFLAGS[sdk=iphonesimulator*] = #{sim_clean}")
+      end
+    end
+    if new_content.include?('FRAMEWORK_SEARCH_PATHS =')
+      fw_paths = new_content[/FRAMEWORK_SEARCH_PATHS = (.*)/, 1]
+      if fw_paths
+        new_content = new_content.gsub(/FRAMEWORK_SEARCH_PATHS = .*/, "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*] = #{fw_paths}\nFRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*] = $(inherited)")
+      end
+    end
     File.write(xcconfig_file, new_content) if content != new_content
   end
 end
