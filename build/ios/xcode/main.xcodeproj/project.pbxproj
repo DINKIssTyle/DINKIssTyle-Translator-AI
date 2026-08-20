@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A01CFAA3DF963578433ECED0 /* libPods-DKST Translator AI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = F73840A661769C57129D7A3F /* libPods-DKST Translator AI.a */; };
 		C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };
 		C0DEBEEF00000000000000F1 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000101 /* UIKit.framework */; };
 		C0DEBEEF00000000000000F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000102 /* Foundation.framework */; };
@@ -24,13 +25,11 @@
 		C0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		C0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };
 		C0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };
-		CAF75EDE79DA7851ED0B57AE /* libPods-DKST Translator AI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0141EC2B7DEFA0E6454B2727 /* libPods-DKST Translator AI.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0141EC2B7DEFA0E6454B2727 /* libPods-DKST Translator AI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-DKST Translator AI.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		1CE9A6C6AE90B42CB5A95EDA /* Pods-DKST Translator AI.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.debug.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.debug.xcconfig"; sourceTree = "<group>"; };
-		1F642FFCD7440F1F721C6184 /* Pods-DKST Translator AI.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.release.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.release.xcconfig"; sourceTree = "<group>"; };
+		182D7AB7F0960DDF75C7F40C /* Pods-DKST Translator AI.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.release.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.release.xcconfig"; sourceTree = "<group>"; };
+		40E226E729DEF346220FF34B /* Pods-DKST Translator AI.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-DKST Translator AI.debug.xcconfig"; path = "Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI.debug.xcconfig"; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C0DEBEEF0000000000000004 /* DKST Translator AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "DKST Translator AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -49,6 +48,7 @@
 		C0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };
 		C0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		F73840A661769C57129D7A3F /* libPods-DKST Translator AI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-DKST Translator AI.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,18 +67,18 @@
 				C0DEBEEF00000000000000F4 /* Security.framework in Frameworks */,
 				C0DEBEEF00000000000000F5 /* CoreFoundation.framework in Frameworks */,
 				C0DEBEEF00000000000000F6 /* libresolv.tbd in Frameworks */,
-				CAF75EDE79DA7851ED0B57AE /* libPods-DKST Translator AI.a in Frameworks */,
+				A01CFAA3DF963578433ECED0 /* libPods-DKST Translator AI.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A14493CC5B5259B6188099C0 /* Pods */ = {
+		9B6899D38205B3476EBF3FD1 /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				1CE9A6C6AE90B42CB5A95EDA /* Pods-DKST Translator AI.debug.xcconfig */,
-				1F642FFCD7440F1F721C6184 /* Pods-DKST Translator AI.release.xcconfig */,
+				40E226E729DEF346220FF34B /* Pods-DKST Translator AI.debug.xcconfig */,
+				182D7AB7F0960DDF75C7F40C /* Pods-DKST Translator AI.release.xcconfig */,
 			);
 			name = Pods;
 			path = ../Pods;
@@ -90,7 +90,7 @@
 				C0DEBEEF0000000000000020 /* Products */,
 				C0DEBEEF0000000000000045 /* Frameworks */,
 				C0DEBEEF0000000000000030 /* main */,
-				A14493CC5B5259B6188099C0 /* Pods */,
+				9B6899D38205B3476EBF3FD1 /* Pods */,
 			);
 			sourceTree = "<group>";
 		};
@@ -126,7 +126,7 @@
 				C0DEBEEF0000000000000105 /* CoreFoundation.framework */,
 				C0DEBEEF0000000000000106 /* libresolv.tbd */,
 				C0DEBEEF0000000000000107 /* DKST Translator AI.a */,
-				0141EC2B7DEFA0E6454B2727 /* libPods-DKST Translator AI.a */,
+				F73840A661769C57129D7A3F /* libPods-DKST Translator AI.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -138,13 +138,13 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = C0DEBEEF0000000000000070 /* Build configuration list for PBXNativeTarget "DKST Translator AI" */;
 			buildPhases = (
-				2F60176307C39DABF647D73E /* [CP] Check Pods Manifest.lock */,
+				E71373ED8F9FA51B1127767E /* [CP] Check Pods Manifest.lock */,
 				C0DEBEEF0000000000000055 /* Prebuild: Wails Go Archive */,
 				C0DEBEEF0000000000000050 /* Sources */,
 				C0DEBEEF0000000000000056 /* Frameworks */,
 				C0DEBEEF0000000000000057 /* Resources */,
 				C0DEBEEF0000000000000208 /* Embed & Sign Dynamic Frameworks */,
-				1FA35A20014D2F6B27C02A17 /* [CP] Copy Pods Resources */,
+				50E6F65FC236B6FD0179DB8C /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -206,7 +206,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		1FA35A20014D2F6B27C02A17 /* [CP] Copy Pods Resources */ = {
+		50E6F65FC236B6FD0179DB8C /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -221,28 +221,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-DKST Translator AI/Pods-DKST Translator AI-resources.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		2F60176307C39DABF647D73E /* [CP] Check Pods Manifest.lock */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
-				"${PODS_ROOT}/Manifest.lock",
-			);
-			name = "[CP] Check Pods Manifest.lock";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-DKST Translator AI-checkManifestLockResult.txt",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
 		C0DEBEEF0000000000000055 /* Prebuild: Wails Go Archive */ = {
@@ -281,6 +259,28 @@
 			shellPath = /bin/sh;
 			shellScript = "FRAMEWORKS_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nmkdir -p \"${FRAMEWORKS_DIR}\"\nSRC_FW=\"\"\nif [ -d \"${BUILT_PRODUCTS_DIR}/CLiteRTLM.framework\" ]; then\n  SRC_FW=\"${BUILT_PRODUCTS_DIR}/CLiteRTLM.framework\"\nelif [ -d \"${BUILT_PRODUCTS_DIR}/PackageFrameworks/CLiteRTLM.framework\" ]; then\n  SRC_FW=\"${BUILT_PRODUCTS_DIR}/PackageFrameworks/CLiteRTLM.framework\"\nelse\n  SRC_FW=$(find \"${BUILD_DIR}/..\" -name \"CLiteRTLM.framework\" -type d 2>/dev/null | grep -v \"${FRAMEWORKS_FOLDER_PATH}\" | head -n 1)\nfi\n\nif [ -n \"${SRC_FW}\" ] && [ -d \"${SRC_FW}\" ]; then\n  echo \"Embedding CLiteRTLM.framework from ${SRC_FW} to ${FRAMEWORKS_DIR}\"\n  rsync -a --delete \"${SRC_FW}\" \"${FRAMEWORKS_DIR}/\"\n  if [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n    /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"${FRAMEWORKS_DIR}/CLiteRTLM.framework\"\n  fi\nfi\n";
 		};
+		E71373ED8F9FA51B1127767E /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-DKST Translator AI-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -299,13 +299,14 @@
 /* Begin XCBuildConfiguration section */
 		C0DEBEEF0000000000000090 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 1CE9A6C6AE90B42CB5A95EDA /* Pods-DKST Translator AI.debug.xcconfig */;
+			baseConfigurationReference = 40E226E729DEF346220FF34B /* Pods-DKST Translator AI.debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "$(inherited)";
 				INFOPLIST_FILE = main/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.5;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -331,13 +332,14 @@
 		};
 		C0DEBEEF00000000000000A0 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 1F642FFCD7440F1F721C6184 /* Pods-DKST Translator AI.release.xcconfig */;
+			baseConfigurationReference = 182D7AB7F0960DDF75C7F40C /* Pods-DKST Translator AI.release.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "$(inherited)";
 				INFOPLIST_FILE = main/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.5;
 				LD_RUNPATH_SEARCH_PATHS = (

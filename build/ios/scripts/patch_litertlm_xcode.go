@@ -272,6 +272,7 @@ func main() {
 				TARGETED_DEVICE_FAMILY = "1,2";
 				ONLY_ACTIVE_ARCH = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "$(inherited)";
 				SWIFT_VERSION = 5.0;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
