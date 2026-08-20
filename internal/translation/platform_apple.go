@@ -44,10 +44,31 @@ var (
 
 func appleLibraryPath() string {
 	executable, err := os.Executable()
-	if err != nil {
-		return ""
+	candidates := make([]string, 0, 8)
+	if err == nil {
+		dir := filepath.Dir(executable)
+		candidates = append(candidates,
+			filepath.Clean(filepath.Join(dir, "..", "Frameworks", "DKSTTranslation.dylib")),
+			filepath.Clean(filepath.Join(dir, "Frameworks", "DKSTTranslation.dylib")),
+			filepath.Clean(filepath.Join(dir, "dkst-translator-ai.translation.dylib")),
+			filepath.Clean(filepath.Join(dir, "DKST Translator AI.app", "Contents", "Frameworks", "DKSTTranslation.dylib")),
+			filepath.Clean(filepath.Join(dir, "dkst-translator-ai.app", "Contents", "Frameworks", "DKSTTranslation.dylib")),
+		)
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(executable), "..", "Frameworks", "DKSTTranslation.dylib"))
+	candidates = append(candidates,
+		filepath.Join("bin", "DKST Translator AI.app", "Contents", "Frameworks", "DKSTTranslation.dylib"),
+		filepath.Join("bin", "dkst-translator-ai.app", "Contents", "Frameworks", "DKSTTranslation.dylib"),
+		filepath.Join("bin", "dkst-translator-ai.translation.dylib"),
+	)
+	for _, cand := range candidates {
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return ""
 }
 
 func platformCapabilities() Capabilities {
