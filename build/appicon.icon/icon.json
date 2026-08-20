@@ -6,7 +6,7 @@
     {
       "layers" : [
         {
-          "image-name" : "appicon_winlin.png",
+          "image-name" : "appicon.png",
           "name" : "appicon"
         }
       ],
@@ -16,7 +16,7 @@
       },
       "specular" : true,
       "translucency" : {
-        "enabled" : true,
+        "enabled" : false,
         "value" : 0.5
       }
     }
