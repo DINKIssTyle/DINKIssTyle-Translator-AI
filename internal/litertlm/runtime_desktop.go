@@ -69,6 +69,14 @@ func (m *Manager) ensurePlatform(ctx context.Context, config Config) (string, st
 }
 
 func findBundledModel() string {
+	if models, err := ListLocalModels(); err == nil && len(models) > 0 {
+		for _, m := range models {
+			if strings.Contains(strings.ToLower(m.Name), "-gpu") {
+				return m.Path
+			}
+		}
+		return models[0].Path
+	}
 	executable, _ := os.Executable()
 	base := filepath.Dir(executable)
 	for _, candidate := range []string{

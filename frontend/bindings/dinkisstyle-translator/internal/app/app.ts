@@ -30,6 +30,10 @@ import * as translation$0 from "../translation/models.js";
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function CancelLiteRTDownload(): $CancellablePromise<boolean> {
+    return $Call.ByID(273000206);
+}
+
 /**
  * CancelTranslation aborts the active translation request, if any.
  */
@@ -45,10 +49,18 @@ export function ConfirmClearSource(): $CancellablePromise<boolean> {
     return $Call.ByID(2743851642);
 }
 
+export function ConfirmDeleteLiteRTModel(modelName: string): $CancellablePromise<boolean> {
+    return $Call.ByID(2682846144, modelName);
+}
+
 export function CreateTranslatedPDF(req: file$0.PDFCreateRequest): $CancellablePromise<file$0.PDFResult> {
     return $Call.ByID(4170096138, req).then(($result: any) => {
         return $$createType0($result);
     });
+}
+
+export function DeleteLiteRTModel(modelPathOrName: string): $CancellablePromise<boolean> {
+    return $Call.ByID(3454904368, modelPathOrName);
 }
 
 export function DownloadLiteRTModel(repoOrURL: string, token: string): $CancellablePromise<string> {
@@ -88,6 +100,18 @@ export function GetWebServerSettings(): $CancellablePromise<$models.WebServerSet
 
 export function GetWindowMode(): $CancellablePromise<string> {
     return $Call.ByID(3464172525);
+}
+
+export function ImportLiteRTModel(): $CancellablePromise<litertlm$0.LocalModelInfo> {
+    return $Call.ByID(2540260230).then(($result: any) => {
+        return $$createType6($result);
+    });
+}
+
+export function ImportLiteRTModelFromPath(sourcePath: string): $CancellablePromise<litertlm$0.LocalModelInfo> {
+    return $Call.ByID(2524734529, sourcePath).then(($result: any) => {
+        return $$createType6($result);
+    });
 }
 
 export function ListLocalLiteRTModels(): $CancellablePromise<litertlm$0.LocalModelInfo[]> {

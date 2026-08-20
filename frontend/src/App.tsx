@@ -4,14 +4,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import PDFPreview from './PDFPreview';
 import {
+    CancelLiteRTDownload,
     CancelTranslation,
     ConfirmClearSource,
+    ConfirmDeleteLiteRTModel,
     CreateTranslatedPDF,
+    DeleteLiteRTModel,
     DownloadLiteRTModel,
     GetHostProviderSettings,
+    GetLiteRTModelsDir,
     GetWebServerSettings,
     GetWindowMode,
     GetModels,
+    ImportLiteRTModel,
+    ImportLiteRTModelFromPath,
     ListLocalLiteRTModels,
     OpenCertificateFolder,
     OpenDebugStudioWindow,
@@ -1375,6 +1381,7 @@ function App() {
     const [showDebugPanel, setShowDebugPanel] = useState(storedSettings?.showDebugPanel ?? true);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [showModelModal, setShowModelModal] = useState(false);
+    const [settingsActiveTab, setSettingsActiveTab] = useState<'appearance' | 'translation' | 'litert' | 'remote_ai' | 'webserver' | 'about'>('translation');
     const [showModelPopover, setShowModelPopover] = useState(false);
     const [showEnhancedContextModal, setShowEnhancedContextModal] = useState(false);
     const [enhancedContextDraftEnabled, setEnhancedContextDraftEnabled] = useState(false);
@@ -1476,15 +1483,29 @@ function App() {
     const [isDownloadingModel, setIsDownloadingModel] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState<{ percentage: number; downloaded: number; total: number; status: string; modelName: string; error?: string } | null>(null);
     const [localLiteRTModels, setLocalLiteRTModels] = useState<{ name: string; path: string; sizeBytes: number }[]>([]);
+    const [modelsStorageDir, setModelsStorageDir] = useState("");
+    const [isImportingModel, setIsImportingModel] = useState(false);
     const [hfDownloadRepo, setHfDownloadRepo] = useState("litert-community/gemma-4-E2B-it-litert-lm");
     const [hfToken, setHfToken] = useState("");
     const [showDownloadOptions, setShowDownloadOptions] = useState(false);
 
+    const formatModelSize = (bytes: number): string => {
+        if (!bytes || bytes <= 0) return "0 MB";
+        if (bytes >= 1024 * 1024 * 1024) {
+            return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        }
+        return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+    };
+
     const refreshLocalModels = async () => {
         if (isBrowserMode) return;
         try {
-            const list = await ListLocalLiteRTModels();
+            const [list, dir] = await Promise.all([
+                ListLocalLiteRTModels(),
+                GetLiteRTModelsDir().catch(() => ""),
+            ]);
             setLocalLiteRTModels(list || []);
+            if (dir) setModelsStorageDir(dir);
             if (list && list.length > 0) {
                 setProviderSettings(prev => {
                     if (prev.mode === "litertlm" && (!prev.liteRTModelPath || !prev.model)) {
@@ -1504,6 +1525,63 @@ function App() {
         }
     };
 
+    const handleImportLiteRTModel = async () => {
+        if (isImportingModel) return;
+        setIsImportingModel(true);
+        try {
+            const imported = await ImportLiteRTModel();
+            if (imported && imported.name && imported.path) {
+                const modelId = imported.name.replace(/\.litertlm$/i, "");
+                const nextSettings: ProviderSettings = {
+                    ...providerSettings,
+                    liteRTModelPath: imported.path,
+                    model: modelId,
+                };
+                setProviderSettings(nextSettings);
+                showSavedToastMessage(`Imported and selected: ${imported.name}`);
+                await refreshLocalModels();
+                void fetchModels(nextSettings);
+            }
+        } catch (err: any) {
+            console.error("Failed to import model:", err);
+            showSavedToastMessage(`Import failed: ${String(err)}`);
+        } finally {
+            setIsImportingModel(false);
+        }
+    };
+
+    const handleDeleteLiteRTModel = async (model: { name: string; path: string }) => {
+        try {
+            let confirmed = false;
+            try {
+                confirmed = await ConfirmDeleteLiteRTModel(model.name);
+            } catch {
+                confirmed = window.confirm(`Are you sure you want to delete "${model.name}" from storage?`);
+            }
+            if (!confirmed) return;
+
+            const ok = await DeleteLiteRTModel(model.path);
+            if (ok) {
+                showSavedToastMessage(`Deleted ${model.name}`);
+                const updatedList = (await ListLocalLiteRTModels()) || [];
+                setLocalLiteRTModels(updatedList);
+                if (providerSettings.liteRTModelPath === model.path || providerSettings.model === model.name.replace(/\.litertlm$/i, "")) {
+                    const fallback = updatedList[0];
+                    const nextSettings: ProviderSettings = {
+                        ...providerSettings,
+                        liteRTModelPath: fallback ? fallback.path : "",
+                        model: fallback ? fallback.name.replace(/\.litertlm$/i, "") : "",
+                    };
+                    setProviderSettings(nextSettings);
+                    void fetchModels(nextSettings);
+                }
+            }
+        } catch (err: any) {
+            console.error("Failed to delete model:", err);
+            showSavedToastMessage(`Delete failed: ${String(err)}`);
+        }
+    };
+
     useEffect(() => {
         if (!isBrowserMode) {
             void refreshLocalModels().then(() => {
@@ -1519,7 +1597,12 @@ function App() {
             const data = event?.data;
             if (data) {
                 setDownloadProgress(data);
-                if (data.status === "completed" || data.status === "error") {
+                if (data.status === "downloading" || data.status === "connecting") {
+                    setIsDownloadingModel(true);
+                } else if (data.status === "completed") {
+                    setIsDownloadingModel(false);
+                    void refreshLocalModels();
+                } else if (data.status === "cancelled" || data.status === "error") {
                     setIsDownloadingModel(false);
                 }
             }
@@ -1529,10 +1612,26 @@ function App() {
         };
     }, []);
 
+    const handleCancelLiteRTDownload = async () => {
+        try {
+            await CancelLiteRTDownload();
+            setIsDownloadingModel(false);
+            showSavedToastMessage("Download paused/cancelled");
+        } catch (err: any) {
+            console.error("Failed to cancel download:", err);
+        }
+    };
+
     const handleDownloadLiteRTModel = async () => {
         if (isDownloadingModel) return;
         setIsDownloadingModel(true);
-        setDownloadProgress({ percentage: 0, downloaded: 0, total: 0, status: "connecting", modelName: "gemma-4-E2B-it.litertlm" });
+        setDownloadProgress(prev => ({
+            percentage: prev?.percentage || 0,
+            downloaded: prev?.downloaded || 0,
+            total: prev?.total || 0,
+            status: "connecting",
+            modelName: prev?.modelName || "gemma-4-E2B-it.litertlm"
+        }));
         try {
             const savedPath = await DownloadLiteRTModel(hfDownloadRepo, hfToken);
             if (savedPath) {
@@ -1548,8 +1647,12 @@ function App() {
                 void fetchModels(nextSettings);
             }
         } catch (err: any) {
-            console.error("Failed to download model:", err);
-            showSavedToastMessage(`Download failed: ${String(err)}`);
+            if (String(err).includes("context canceled") || String(err).includes("cancelled")) {
+                console.log("Download was cancelled by user.");
+            } else {
+                console.error("Failed to download model:", err);
+                showSavedToastMessage(`Download failed: ${String(err)}`);
+            }
         } finally {
             setIsDownloadingModel(false);
         }
@@ -4395,7 +4498,14 @@ function App() {
                                                                     void fetchModels(nextSettings);
                                                                 }}
                                                             >
-                                                                <span className="model-popover-name">- {m.name}</span>
+                                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", minWidth: 0, gap: 8 }}>
+                                                                    <span className="model-popover-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                                        {m.name}
+                                                                    </span>
+                                                                    <span style={{ fontSize: "0.72rem", color: "var(--text-soft)", flexShrink: 0 }}>
+                                                                        {formatModelSize(m.sizeBytes)}
+                                                                    </span>
+                                                                </div>
                                                                 {isSelected && (
                                                                     <span className="material-symbols-outlined model-popover-check">check</span>
                                                                 )}
@@ -4412,7 +4522,7 @@ function App() {
                                                                 setShowModelPopover(false);
                                                             }}
                                                         >
-                                                            <span className="model-popover-name">- {model.displayName || model.id}</span>
+                                                            <span className="model-popover-name">{model.displayName || model.id}</span>
                                                             {providerSettings.model === model.id && (
                                                                 <span className="material-symbols-outlined model-popover-check">check</span>
                                                             )}
@@ -4420,7 +4530,20 @@ function App() {
                                                     ))}
                                                 </>
                                             ) : (
-                                                <div className="model-popover-empty">- No models in /models</div>
+                                                <div className="model-popover-empty" style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+                                                    <span>No imported models in storage</span>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-secondary btn-small"
+                                                        style={{ fontSize: "0.75rem", padding: "3px 8px", marginTop: 4 }}
+                                                        onClick={() => {
+                                                            setShowModelPopover(false);
+                                                            setShowModelModal(true);
+                                                        }}
+                                                    >
+                                                        Import or Download in Settings
+                                                    </button>
+                                                </div>
                                             )
                                         )}
                                     </div>
@@ -5257,47 +5380,639 @@ function App() {
 
                 {showModelModal && (
                     <div className="modal-overlay modal-overlay-centered" onClick={() => setShowModelModal(false)}>
-                        <div className={`modal-card settings-modal-card ${isBrowserMode ? "" : "modal-card-settings"}`} onClick={e => e.stopPropagation()}>
-                            <div className="modal-header">
-                                <div>
-                                    <div className="modal-title">LLM Settings</div>
-                                    <div className="modal-subtitle">
-                                        {isBrowserMode
-                                            ? "Use the host application's LLM connection and adjust only browser-appropriate translation options."
-                                            : "Configure translation and web access side by side."}
+                        <div className={`modal-card settings-modal-card ${isMobilePlatform ? "modal-card-mobile-fullscreen" : ""}`} onClick={e => e.stopPropagation()}>
+                            {/* Modern Header matching DKST Markdown Browser */}
+                            <div className="settings-modal-header">
+                                <div className="settings-modal-title-group">
+                                    <div className="settings-modal-icon-badge">
+                                        <span className="material-symbols-outlined">tune</span>
+                                    </div>
+                                    <div>
+                                        <div className="settings-modal-title">Settings</div>
+                                        <div className="settings-modal-subtitle">
+                                            Personalize how DKST Translator AI translates, looks, and works.
+                                        </div>
                                     </div>
                                 </div>
-                                <button className="icon-btn" onClick={() => {
+                                <button className="settings-modal-close-btn" onClick={() => {
                                     setShowModelModal(false);
-                                    showSavedToastMessage("Saved");
+                                    showSavedToastMessage("Settings saved");
                                 }} title="Close">
                                     <span className="material-symbols-outlined">close</span>
                                 </button>
                             </div>
-                            <div className="modal-body settings-modal-body">
-                                {isBrowserMode ? (
-                                    <div className="settings-grid">
-                                        <div className="settings-field">
-                                            <span>Theme</span>
-                                            <select
-                                                value={themeMode}
-                                                onChange={e => {
-                                                    const next = e.target.value as ThemeMode;
-                                                    setThemeMode(next);
-                                                }}
-                                            >
-                                                <option value="auto">Auto (System)</option>
-                                                <option value="light">Light</option>
-                                                <option value="dark">Dark</option>
-                                            </select>
+
+                            {/* Main Body with Responsive Sidebar Tabs & Content Pane */}
+                            <div className="settings-modal-body-container">
+                                {/* Navigation Tabs: Left Sidebar on Desktop/iPad, Top Scrollable Tabs on Mobile */}
+                                <div className="settings-tabs-nav">
+                                    <button
+                                        type="button"
+                                        className={`settings-tab-btn ${settingsActiveTab === 'appearance' ? 'is-active' : ''}`}
+                                        onClick={() => setSettingsActiveTab('appearance')}
+                                    >
+                                        <span className="material-symbols-outlined settings-tab-icon">palette</span>
+                                        <div className="settings-tab-label-group">
+                                            <span className="settings-tab-title">Appearance</span>
+                                            <span className="settings-tab-desc">Theme & style</span>
                                         </div>
-                                        {providerSettings.mode !== "litertlm" && (
-                                            <div className="settings-field">
-                                                <span>Model</span>
-                                                <div className="toolbar-group model-group">
-                                                    <select value={providerSettings.model} onChange={e => {
-                                                        handleSelectModel(e.target.value);
-                                                    }} disabled={isLoadingModels}>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        className={`settings-tab-btn ${settingsActiveTab === 'translation' ? 'is-active' : ''}`}
+                                        onClick={() => setSettingsActiveTab('translation')}
+                                    >
+                                        <span className="material-symbols-outlined settings-tab-icon">translate</span>
+                                        <div className="settings-tab-label-group">
+                                            <span className="settings-tab-title">Translation</span>
+                                            <span className="settings-tab-desc">Engines & behavior</span>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        className={`settings-tab-btn ${settingsActiveTab === 'litert' ? 'is-active' : ''}`}
+                                        onClick={() => setSettingsActiveTab('litert')}
+                                    >
+                                        <span className="material-symbols-outlined settings-tab-icon">bolt</span>
+                                        <div className="settings-tab-label-group">
+                                            <span className="settings-tab-title">LiteRT-LM</span>
+                                            <span className="settings-tab-desc">On-device AI models</span>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        className={`settings-tab-btn ${settingsActiveTab === 'remote_ai' ? 'is-active' : ''}`}
+                                        onClick={() => setSettingsActiveTab('remote_ai')}
+                                    >
+                                        <span className="material-symbols-outlined settings-tab-icon">smart_toy</span>
+                                        <div className="settings-tab-label-group">
+                                            <span className="settings-tab-title">Remote AI</span>
+                                            <span className="settings-tab-desc">OpenAI & LM Studio</span>
+                                        </div>
+                                    </button>
+
+                                    {!isMobilePlatform && (
+                                        <button
+                                            type="button"
+                                            className={`settings-tab-btn ${settingsActiveTab === 'webserver' ? 'is-active' : ''}`}
+                                            onClick={() => setSettingsActiveTab('webserver')}
+                                        >
+                                            <span className="material-symbols-outlined settings-tab-icon">dns</span>
+                                            <div className="settings-tab-label-group">
+                                                <span className="settings-tab-title">Web Server</span>
+                                                <span className="settings-tab-desc">Browser access & TLS</span>
+                                            </div>
+                                        </button>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        className={`settings-tab-btn ${settingsActiveTab === 'about' ? 'is-active' : ''}`}
+                                        onClick={() => setSettingsActiveTab('about')}
+                                    >
+                                        <span className="material-symbols-outlined settings-tab-icon">info</span>
+                                        <div className="settings-tab-label-group">
+                                            <span className="settings-tab-title">About</span>
+                                            <span className="settings-tab-desc">Version & platform</span>
+                                        </div>
+                                    </button>
+                                </div>
+
+                                {/* Content Panes */}
+                                <div className="settings-content-pane">
+                                    {/* --- Tab 1: Appearance --- */}
+                                    {settingsActiveTab === 'appearance' && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">PERSONALIZATION</span>
+                                                <h2 className="settings-section-title">Appearance</h2>
+                                                <p className="settings-section-subtitle">Customize theme, interface controls, and visual behavior.</p>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">dark_mode</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Theme</div>
+                                                        <div className="settings-card-subtitle">Choose interface theme or automatically match system preference.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-theme-selector">
+                                                    <button
+                                                        type="button"
+                                                        className={`settings-theme-pill ${themeMode === 'light' ? 'is-selected' : ''}`}
+                                                        onClick={() => setThemeMode('light')}
+                                                    >
+                                                        <span className="material-symbols-outlined">light_mode</span>
+                                                        <span>Light</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className={`settings-theme-pill ${themeMode === 'dark' ? 'is-selected' : ''}`}
+                                                        onClick={() => setThemeMode('dark')}
+                                                    >
+                                                        <span className="material-symbols-outlined">dark_mode</span>
+                                                        <span>Dark</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className={`settings-theme-pill ${themeMode === 'auto' ? 'is-selected' : ''}`}
+                                                        onClick={() => setThemeMode('auto')}
+                                                    >
+                                                        <span className="material-symbols-outlined">brightness_auto</span>
+                                                        <span>Auto (System)</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">tune</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Controls & Sliders</div>
+                                                        <div className="settings-card-subtitle">Toggle optional toolbar and parameter controls.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Show reasoning control</span>
+                                                        <span className="settings-toggle-desc">Always display the reasoning pass toggle in the action bar.</span>
+                                                    </div>
+                                                    <label className="switch-control">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={providerSettings.forceShowReasoning}
+                                                            onChange={e => setProviderSettings(prev => ({ ...prev, forceShowReasoning: e.target.checked }))}
+                                                        />
+                                                        <span className="switch-slider" />
+                                                    </label>
+                                                </div>
+                                                <div className="settings-divider" />
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Show temperature control</span>
+                                                        <span className="settings-toggle-desc">Enable temperature slider for sampling randomness.</span>
+                                                    </div>
+                                                    <label className="switch-control">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={providerSettings.forceShowTemperature}
+                                                            onChange={e => {
+                                                                const isVisible = e.target.checked;
+                                                                setProviderSettings(prev => ({ ...prev, forceShowTemperature: isVisible }));
+                                                                if (!isVisible) setShowTemperatureSlider(false);
+                                                            }}
+                                                        />
+                                                        <span className="switch-slider" />
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* --- Tab 2: Translation --- */}
+                                    {settingsActiveTab === 'translation' && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">TRANSLATION ENGINE</span>
+                                                <h2 className="settings-section-title">Translation</h2>
+                                                <p className="settings-section-subtitle">Configure primary translation mode, smart chunking, and post-editing.</p>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">swap_horiz</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Default Translation Mode</div>
+                                                        <div className="settings-card-subtitle">Select on-device native translator or LLM provider.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-field-full">
+                                                    <select
+                                                        className="settings-select-styled"
+                                                        value={providerSettings.mode}
+                                                        onChange={e => handleSwitchProviderMode(e.target.value as ProviderMode)}
+                                                    >
+                                                        <option value="litertlm">LiteRT-LM (On-device)</option>
+                                                        {isApplePlatform && <option value="apple">Apple Translation (On-device)</option>}
+                                                        {isMLKitPlatform && <option value="google-mlkit">Google Translation (ML Kit)</option>}
+                                                        <option value="openai">OpenAI</option>
+                                                        <option value="lmstudio">LM Studio (Local server)</option>
+                                                    </select>
+                                                </div>
+
+                                                {isNativeMode && (
+                                                    <div className="native-translation-banner" style={{ marginTop: 12 }}>
+                                                        <div className="native-translation-badge">
+                                                            <span className="material-symbols-outlined">{providerSettings.mode === "apple" ? "translate" : "smart_toy"}</span>
+                                                            <span className="native-translation-name">{providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"}</span>
+                                                        </div>
+                                                        <div className="native-translation-desc">
+                                                            {providerSettings.mode === "apple"
+                                                                ? "Translates instantly in a single pass on-device using Apple Translation framework. (Supported: macOS 15+, iOS 18+, iPadOS 18+)"
+                                                                : "Translates instantly on-device using Google ML Kit. (Supported: Android 6.0+, iOS 15.5+, iPadOS 15.5+)"}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">auto_stories</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Smart Chunking</div>
+                                                        <div className="settings-card-subtitle">Split long text at paragraph and sentence boundaries for optimal translation quality.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Enable Smart Chunking</span>
+                                                        <span className="settings-toggle-desc">Automatically divides large documents into context-preserving chunks.</span>
+                                                    </div>
+                                                    <label className="switch-control">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={providerSettings.enableSmartChunking}
+                                                            onChange={e => setProviderSettings(prev => ({ ...prev, enableSmartChunking: e.target.checked }))}
+                                                        />
+                                                        <span className="switch-slider" />
+                                                    </label>
+                                                </div>
+                                                {providerSettings.enableSmartChunking && (
+                                                    <>
+                                                        <div className="settings-divider" />
+                                                        <div className="settings-input-row">
+                                                            <div className="settings-toggle-text">
+                                                                <span className="settings-toggle-title">Target Chunk Size</span>
+                                                                <span className="settings-toggle-desc">Maximum characters per translation unit (default: 2000).</span>
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                inputMode="numeric"
+                                                                pattern="[0-9]*"
+                                                                className="settings-input-numeric"
+                                                                value={smartChunkSizeDraft}
+                                                                onChange={e => setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""))}
+                                                                onBlur={commitSmartChunkSizeDraft}
+                                                                placeholder="2000"
+                                                            />
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">edit_note</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Context-Aware Post-Editing</div>
+                                                        <div className="settings-card-subtitle">Automatically proofread and align translation tone and context across chunks.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Enable Post-Editing Pass</span>
+                                                        <span className="settings-toggle-desc">Refines translated draft for smooth continuity. (Disabled in fast translation mode)</span>
+                                                    </div>
+                                                    <label className="switch-control">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={effectiveTopicAwarePostEditEnabled}
+                                                            disabled={fastTranslationEnabled}
+                                                            onChange={e => setProviderSettings(prev => ({ ...prev, enableTopicAwarePostEdit: e.target.checked }))}
+                                                        />
+                                                        <span className="switch-slider" />
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* --- Tab 3: LiteRT-LM (On-Device) --- */}
+                                    {settingsActiveTab === 'litert' && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">ON-DEVICE INFERENCE</span>
+                                                <h2 className="settings-section-title">LiteRT-LM (On-device)</h2>
+                                                <p className="settings-section-subtitle">Manage local AI models, downloads with resume capability, and local storage.</p>
+                                            </div>
+
+                                            {/* Storage & Import Card */}
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">folder_managed</span>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div className="settings-card-title">Model Storage & Import</div>
+                                                        <div className="settings-card-subtitle">Local directory where .litertlm models are saved and discovered.</div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-primary btn-small"
+                                                        style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                                                        onClick={handleImportLiteRTModel}
+                                                        disabled={isImportingModel}
+                                                    >
+                                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>upload_file</span>
+                                                        {isImportingModel ? "Importing..." : "Import Model"}
+                                                    </button>
+                                                </div>
+                                                {modelsStorageDir && (
+                                                    <div className="litert-storage-badge" title={modelsStorageDir} style={{ marginTop: 8 }}>
+                                                        <span className="material-symbols-outlined">folder_open</span>
+                                                        <span className="litert-storage-path">Storage: <strong>{modelsStorageDir}</strong></span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Local Installed Models Card */}
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">inventory_2</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Installed Models ({localLiteRTModels.length})</div>
+                                                        <div className="settings-card-subtitle">Select an active model or delete unused models to free up disk space.</div>
+                                                    </div>
+                                                </div>
+
+                                                {localLiteRTModels.length > 0 ? (
+                                                    <div className="litert-models-container" style={{ marginTop: 8 }}>
+                                                        {localLiteRTModels.map(m => {
+                                                            const modelId = m.name.replace(/\.litertlm$/i, "");
+                                                            const isSelected = providerSettings.liteRTModelPath === m.path || providerSettings.model === modelId;
+                                                            return (
+                                                                <div key={m.path} className={`litert-model-item ${isSelected ? "is-selected" : ""}`}>
+                                                                    <div className="litert-model-left">
+                                                                        <span className="material-symbols-outlined litert-model-icon">smart_toy</span>
+                                                                        <div className="litert-model-details">
+                                                                            <span className="litert-model-name" title={m.name}>{m.name}</span>
+                                                                            <div className="litert-model-meta">
+                                                                                <span className="litert-model-size-badge">{formatModelSize(m.sizeBytes)}</span>
+                                                                                {isSelected && <span className="litert-model-badge-active">Active</span>}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="litert-model-actions">
+                                                                        {!isSelected ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="btn btn-secondary btn-small"
+                                                                                style={{ fontSize: "0.78rem", padding: "4px 10px" }}
+                                                                                onClick={() => {
+                                                                                    const nextSettings: ProviderSettings = {
+                                                                                        ...providerSettings,
+                                                                                        liteRTModelPath: m.path,
+                                                                                        model: modelId,
+                                                                                    };
+                                                                                    setProviderSettings(nextSettings);
+                                                                                    showSavedToastMessage(`Selected: ${modelId}`);
+                                                                                    void fetchModels(nextSettings);
+                                                                                }}
+                                                                            >
+                                                                                Select
+                                                                            </button>
+                                                                        ) : null}
+                                                                        <button
+                                                                            type="button"
+                                                                            className="litert-btn-delete"
+                                                                            title={`Delete ${m.name}`}
+                                                                            aria-label={`Delete ${m.name}`}
+                                                                            onClick={() => handleDeleteLiteRTModel(m)}
+                                                                        >
+                                                                            <span className="material-symbols-outlined">delete</span>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : (
+                                                    <div className="litert-empty-models" style={{ marginTop: 8 }}>
+                                                        <span className="material-symbols-outlined">deployed_code_alert</span>
+                                                        <span style={{ fontWeight: 600 }}>No LiteRT-LM models in storage directory.</span>
+                                                        <span style={{ fontSize: "0.8rem", color: "var(--text-soft)" }}>Import a .litertlm file from disk or download one below.</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Download Model Card with Cancel & Resume */}
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">cloud_download</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div className="settings-card-title">Hugging Face Model Download</div>
+                                                        <div className="settings-card-subtitle">Download optimized on-device Gemma models directly from Hugging Face with resume support.</div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-secondary btn-small"
+                                                        style={{ fontSize: "0.75rem", padding: "3px 8px" }}
+                                                        onClick={() => setShowDownloadOptions(prev => !prev)}
+                                                    >
+                                                        {showDownloadOptions ? "Standard" : "Custom Options"}
+                                                    </button>
+                                                </div>
+
+                                                {showDownloadOptions && (
+                                                    <div className="settings-custom-download-fields" style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                                                        <label className="settings-field-compact">
+                                                            <span>HF Repo / Direct Download URL</span>
+                                                            <input
+                                                                type="text"
+                                                                value={hfDownloadRepo}
+                                                                onChange={e => setHfDownloadRepo(e.target.value)}
+                                                                placeholder="litert-community/gemma-4-E2B-it-litert-lm"
+                                                            />
+                                                        </label>
+                                                        <label className="settings-field-compact">
+                                                            <span>Hugging Face Access Token (Optional for gated models)</span>
+                                                            <input
+                                                                type="password"
+                                                                value={hfToken}
+                                                                onChange={e => setHfToken(e.target.value)}
+                                                                placeholder="hf_..."
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                )}
+
+                                                <div className="settings-download-action-area" style={{ marginTop: 12 }}>
+                                                    {isDownloadingModel ? (
+                                                        <div className="settings-download-progress-container">
+                                                            <div className="settings-download-progress-header">
+                                                                <div className="settings-download-status-text">
+                                                                    <span className="material-symbols-outlined rotating" style={{ fontSize: 16, color: "var(--accent)" }}>sync</span>
+                                                                    <span>{downloadProgress?.status === "connecting" ? "Connecting..." : `Downloading ${downloadProgress?.modelName || "model"}...`}</span>
+                                                                </div>
+                                                                <span className="settings-download-percentage">{downloadProgress?.percentage ? `${downloadProgress.percentage.toFixed(1)}%` : "0%"}</span>
+                                                            </div>
+                                                            <div className="settings-progress-track">
+                                                                <div
+                                                                    className="settings-progress-bar-fill"
+                                                                    style={{ width: `${downloadProgress?.percentage || 0}%` }}
+                                                                />
+                                                            </div>
+                                                            <div className="settings-download-progress-footer">
+                                                                <span className="settings-download-bytes">
+                                                                    {downloadProgress?.downloaded ? (downloadProgress.downloaded / (1024 * 1024)).toFixed(1) : "0.0"} MB / {downloadProgress?.total ? (downloadProgress.total / (1024 * 1024)).toFixed(1) : "..."} MB
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn btn-secondary btn-small"
+                                                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#ff453a", borderColor: "rgba(255,69,58,0.3)" }}
+                                                                    onClick={handleCancelLiteRTDownload}
+                                                                >
+                                                                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>pause</span>
+                                                                    Cancel / Pause
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-primary"
+                                                                style={{ flex: 1, justifyContent: "center", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px" }}
+                                                                onClick={handleDownloadLiteRTModel}
+                                                            >
+                                                                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                                                                    {downloadProgress?.status === "cancelled" && (downloadProgress?.downloaded || 0) > 0 ? "play_arrow" : "download"}
+                                                                </span>
+                                                                {downloadProgress?.status === "cancelled" && (downloadProgress?.downloaded || 0) > 0
+                                                                    ? `Resume Download (${(downloadProgress.downloaded / (1024 * 1024)).toFixed(1)} MB saved)`
+                                                                    : "Download Gemma 4 E2B (.litertlm)"}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Advanced Runtime Options Card */}
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">settings_suggest</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Runtime & Network Options</div>
+                                                        <div className="settings-card-subtitle">Configure on-device runner port and optional execution mode.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
+                                                    <label className="settings-field-label">Runtime Mode</label>
+                                                    <select
+                                                        className="settings-select-styled"
+                                                        value={providerSettings.liteRTRuntimeMode}
+                                                        onChange={e => setProviderSettings(prev => ({
+                                                            ...prev,
+                                                            liteRTRuntimeMode: e.target.value as "ondevice" | "server",
+                                                            model: "",
+                                                        }))}
+                                                    >
+                                                        <option value="ondevice">On-device only</option>
+                                                        <option value="server" disabled={isMobilePlatform}>On-device + OpenAI server (desktop)</option>
+                                                    </select>
+                                                </div>
+                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
+                                                    <label className="settings-field-label">Runtime Port</label>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        className="settings-input-styled"
+                                                        value={providerSettings.liteRTPort}
+                                                        onChange={e => {
+                                                            const port = Math.max(1, Math.min(65535, Number(e.target.value.replace(/[^\d]/g, "")) || 9379));
+                                                            setProviderSettings(prev => ({
+                                                                ...prev,
+                                                                liteRTPort: port,
+                                                                endpoint: `http://127.0.0.1:${port}`,
+                                                                model: "",
+                                                            }));
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div className="settings-field-full">
+                                                    <label className="settings-field-label">Runtime Binary (Optional Override)</label>
+                                                    <input
+                                                        type="text"
+                                                        className="settings-input-styled"
+                                                        value={providerSettings.liteRTRuntimePath}
+                                                        onChange={e => setProviderSettings(prev => ({
+                                                            ...prev,
+                                                            liteRTRuntimePath: e.target.value,
+                                                            model: "",
+                                                        }))}
+                                                        placeholder="Bundled runtime"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* --- Tab 4: Remote AI --- */}
+                                    {settingsActiveTab === 'remote_ai' && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">API INTEGRATION</span>
+                                                <h2 className="settings-section-title">Remote AI Models</h2>
+                                                <p className="settings-section-subtitle">Connect to OpenAI compatible API endpoints or local LM Studio servers.</p>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">link</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Endpoint & Authentication</div>
+                                                        <div className="settings-card-subtitle">Set the base URL and API authorization token.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-field-full" style={{ marginBottom: 10 }}>
+                                                    <label className="settings-field-label">Endpoint URL</label>
+                                                    <input
+                                                        type="text"
+                                                        className="settings-input-styled"
+                                                        value={providerSettings.endpoint}
+                                                        onChange={e => setProviderSettings(prev => ({ ...prev, endpoint: e.target.value }))}
+                                                        placeholder="http://127.0.0.1:1234 or https://api.openai.com/v1"
+                                                    />
+                                                </div>
+                                                <div className="settings-field-full">
+                                                    <label className="settings-field-label">API Key</label>
+                                                    <input
+                                                        type="password"
+                                                        className="settings-input-styled"
+                                                        value={providerSettings.apiKey}
+                                                        onChange={e => setProviderSettings(prev => ({ ...prev, apiKey: e.target.value }))}
+                                                        placeholder="sk-... or api token"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">token</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div className="settings-card-title">Model Selection</div>
+                                                        <div className="settings-card-subtitle">Choose the target LLM model served at the endpoint.</div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="icon-btn"
+                                                        onClick={() => fetchModels()}
+                                                        disabled={isLoadingModels}
+                                                        title="Refresh Models"
+                                                    >
+                                                        <span className="material-symbols-outlined">refresh</span>
+                                                    </button>
+                                                </div>
+                                                <div className="settings-field-full">
+                                                    <select
+                                                        className="settings-select-styled"
+                                                        value={providerSettings.model}
+                                                        onChange={e => handleSelectModel(e.target.value)}
+                                                        disabled={isLoadingModels}
+                                                    >
                                                         <option value="">Select a Model</option>
                                                         {models.map(model => (
                                                             <option key={model.id} value={model.id}>
@@ -5305,561 +6020,218 @@ function App() {
                                                             </option>
                                                         ))}
                                                     </select>
-                                                    <button className="icon-btn" onClick={() => fetchModels()} disabled={isLoadingModels} title="Refresh Models">
-                                                        <span className="material-symbols-outlined">refresh</span>
-                                                    </button>
                                                 </div>
                                             </div>
-                                        )}
-                                        <div className="settings-field">
-                                            <span>Smart Chunking</span>
-                                            <label className="settings-checkbox">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={providerSettings.enableSmartChunking}
-                                                    onChange={e => setProviderSettings(prev => ({
-                                                        ...prev,
-                                                        enableSmartChunking: e.target.checked,
-                                                    }))}
-                                                />
-                                                <span>Enabled</span>
-                                            </label>
                                         </div>
-                                        <label className="settings-field">
-                                            <span>Chunk Size</span>
-                                            <input
-                                                type="text"
-                                                inputMode="numeric"
-                                                pattern="[0-9]*"
-                                                value={smartChunkSizeDraft}
-                                                disabled={!providerSettings.enableSmartChunking}
-                                                onChange={e => {
-                                                    setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
-                                                }}
-                                                onBlur={commitSmartChunkSizeDraft}
-                                                placeholder="2000"
-                                            />
-                                        </label>
-                                        <label className="settings-checkbox">
-                                            <input
-                                                type="checkbox"
-                                                checked={providerSettings.forceShowReasoning}
-                                                onChange={e => setProviderSettings(prev => ({
-                                                    ...prev,
-                                                    forceShowReasoning: e.target.checked,
-                                                }))}
-                                            />
-                                            <span>Force show reasoning control</span>
-                                        </label>
-                                        <label className="settings-checkbox">
-                                            <input
-                                                type="checkbox"
-                                                checked={effectiveTopicAwarePostEditEnabled}
-                                                disabled={fastTranslationEnabled}
-                                                onChange={e => setProviderSettings(prev => ({
-                                                    ...prev,
-                                                    enableTopicAwarePostEdit: e.target.checked,
-                                                }))}
-                                            />
-                                            <span>Context-Aware Smart Post-Editing</span>
-                                        </label>
-                                        <label className="settings-checkbox">
-                                            <input
-                                                type="checkbox"
-                                                checked={providerSettings.forceShowTemperature}
-                                                onChange={e => {
-                                                    const isVisible = e.target.checked;
-                                                    setProviderSettings(prev => ({
-                                                        ...prev,
-                                                        forceShowTemperature: isVisible,
-                                                    }));
-                                                    if (!isVisible) {
-                                                        setShowTemperatureSlider(false);
-                                                    }
-                                                }}
-                                            />
-                                            <span>Show temperature control</span>
-                                        </label>
-                                        {settingsStatus && (
-                                            <div className={`settings-status ${settingsStatus.toLowerCase().includes("could not load") ? "is-error" : "is-ok"}`}>
-                                                {settingsStatus}
+                                    )}
+
+                                    {/* --- Tab 5: Web Server (Desktop only) --- */}
+                                    {settingsActiveTab === 'webserver' && !isMobilePlatform && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">REMOTE ACCESS</span>
+                                                <h2 className="settings-section-title">Web Server</h2>
+                                                <p className="settings-section-subtitle">Enable browser-based web translation access, password authentication, and TLS certificates.</p>
                                             </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="settings-columns">
-                                        <section className="settings-panel">
-                                            <div className="settings-panel-header">
-                                                <div className="settings-panel-title">LLM</div>
-                                                <div className="settings-panel-subtitle">Provider, model, and translation behavior</div>
-                                            </div>
-                                            <div className="settings-grid">
-                                                <label className="settings-field">
-                                                    <span>Mode</span>
-                                                    <select
-                                                        value={providerSettings.mode}
-                                                        onChange={e => handleSwitchProviderMode(e.target.value as ProviderMode)}
-                                                    >
-                                                        <option value="lmstudio">LM Studio</option>
-                                                        <option value="openai">OpenAI</option>
-                                                        <option value="litertlm">LiteRT-LM (On-device)</option>
-                                                        {isApplePlatform && <option value="apple">Apple Translation</option>}
-                                                        {isMLKitPlatform && <option value="google-mlkit">Google Translation (ML Kit)</option>}
-                                                    </select>
-                                                </label>
-                                                {isNativeMode ? (
-                                                    <div className="native-translation-banner">
-                                                        <div className="native-translation-badge">
-                                                            <span className="material-symbols-outlined">{providerSettings.mode === "apple" ? "translate" : "smart_toy"}</span>
-                                                            <span className="native-translation-name">{providerSettings.mode === "apple" ? "Apple Translation" : "Google Translation (ML Kit)"}</span>
-                                                        </div>
-                                                        <div className="native-translation-desc">
-                                                            {providerSettings.mode === "apple"
-                                                                ? "Translates instantly in a single pass on-device using the Apple Translation framework without draft/post-edit or enhanced context passes. (Supported: macOS 15+, iOS 18+, iPadOS 18+)"
-                                                                : "Translates instantly in a single pass on-device using Google ML Kit without draft/post-edit or enhanced context passes. (Supported: Android 6.0+, iOS 15.5+, iPadOS 15.5+)"}
-                                                        </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">public</span>
+                                                    <div>
+                                                        <div className="settings-card-title">Web Access</div>
+                                                        <div className="settings-card-subtitle">Expose translator UI over HTTP/HTTPS for local network devices.</div>
                                                     </div>
-                                                ) : (
-                                                    <>
-                                                        <label className="settings-field">
-                                                            <span>Endpoint</span>
-                                                            <input
-                                                                type="text"
-                                                                value={providerSettings.endpoint}
-                                                                onChange={e => setProviderSettings(prev => ({ ...prev, endpoint: e.target.value }))}
-                                                                disabled={providerSettings.mode === "litertlm"}
-                                                                placeholder={providerSettings.mode === "litertlm" ? "Managed by the bundled runtime" : "http://127.0.0.1:1234"}
-                                                            />
-                                                        </label>
-                                                        <label className="settings-field">
-                                                            <span>API Key</span>
-                                                            <input
-                                                                type="password"
-                                                                value={providerSettings.apiKey}
-                                                                onChange={e => setProviderSettings(prev => ({ ...prev, apiKey: e.target.value }))}
-                                                                disabled={providerSettings.mode === "litertlm"}
-                                                                placeholder={providerSettings.mode === "lmstudio" ? "Required if your local gateway enforces auth" : providerSettings.mode === "litertlm" ? "Not required for on-device inference" : "Required for OpenAI"}
-                                                            />
-                                                        </label>
-                                                        {providerSettings.mode === "litertlm" && (
-                                                            <>
-                                                                <div className="settings-field settings-field-details">
-                                                                    <span>Model Package (.litertlm)</span>
-                                                                    <div className="settings-inline-action">
-                                                                        <input
-                                                                            type="text"
-                                                                            value={providerSettings.liteRTModelPath}
-                                                                            onChange={e => setProviderSettings(prev => ({
-                                                                                ...prev,
-                                                                                liteRTModelPath: e.target.value,
-                                                                                model: "",
-                                                                            }))}
-                                                                            placeholder="e.g. gemma-4-E2B-it.litertlm"
-                                                                        />
-                                                                        <button className="btn btn-secondary btn-small" type="button" onClick={handleSelectLiteRTLMModelFile}>
-                                                                            Browse
-                                                                        </button>
-                                                                    </div>
-
-                                                                    {localLiteRTModels.length > 0 && (
-                                                                        <div className="settings-local-models" style={{ marginTop: 8 }}>
-                                                                            <span style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
-                                                                                Available in /models:
-                                                                            </span>
-                                                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                                                                {localLiteRTModels.map(m => (
-                                                                                    <button
-                                                                                        key={m.path}
-                                                                                        type="button"
-                                                                                        className={`btn btn-small ${providerSettings.liteRTModelPath === m.path ? "btn-primary" : "btn-secondary"}`}
-                                                                                        style={{ fontSize: "0.8rem", padding: "4px 8px" }}
-                                                                                        onClick={() => {
-                                                                                            setProviderSettings(prev => ({
-                                                                                                ...prev,
-                                                                                                liteRTModelPath: m.path,
-                                                                                                model: "",
-                                                                                            }));
-                                                                                            void fetchModels({
-                                                                                                ...providerSettings,
-                                                                                                liteRTModelPath: m.path,
-                                                                                                model: "",
-                                                                                            });
-                                                                                        }}
-                                                                                    >
-                                                                                        {m.name} ({(m.sizeBytes / (1024 * 1024)).toFixed(0)} MB)
-                                                                                    </button>
-                                                                                ))}
-                                                                            </div>
-                                                                        </div>
-                                                                    )}
-
-                                                                    <div className="settings-download-box" style={{ marginTop: 10, padding: 12, borderRadius: 8, background: "rgba(255, 255, 255, 0.04)", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
-                                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                                                                            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Hugging Face Model Download</span>
-                                                                            <button
-                                                                                type="button"
-                                                                                className="btn btn-secondary btn-small"
-                                                                                style={{ fontSize: "0.75rem", padding: "2px 6px" }}
-                                                                                onClick={() => setShowDownloadOptions(prev => !prev)}
-                                                                            >
-                                                                                {showDownloadOptions ? "Simple" : "Custom Options"}
-                                                                            </button>
-                                                                        </div>
-
-                                                                        {showDownloadOptions && (
-                                                                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-                                                                                <label style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
-                                                                                    HF Repo / Direct URL
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        value={hfDownloadRepo}
-                                                                                        onChange={e => setHfDownloadRepo(e.target.value)}
-                                                                                        placeholder="litert-community/gemma-4-E2B-it-litert-lm"
-                                                                                        style={{ marginTop: 2, fontSize: "0.85rem" }}
-                                                                                    />
-                                                                                </label>
-                                                                                <label style={{ fontSize: "0.8rem", color: "var(--color-text-secondary)" }}>
-                                                                                    HF Token (Optional for gated models)
-                                                                                    <input
-                                                                                        type="password"
-                                                                                        value={hfToken}
-                                                                                        onChange={e => setHfToken(e.target.value)}
-                                                                                        placeholder="hf_..."
-                                                                                        style={{ marginTop: 2, fontSize: "0.85rem" }}
-                                                                                    />
-                                                                                </label>
-                                                                            </div>
-                                                                        )}
-
-                                                                        {isDownloadingModel ? (
-                                                                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                                                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem" }}>
-                                                                                    <span>{downloadProgress?.status === "connecting" ? "Connecting..." : `Downloading ${downloadProgress?.modelName || "model"}...`}</span>
-                                                                                    <span>{downloadProgress?.percentage ? `${downloadProgress.percentage.toFixed(1)}%` : ""}</span>
-                                                                                </div>
-                                                                                <div style={{ width: "100%", height: 6, background: "rgba(255, 255, 255, 0.1)", borderRadius: 3, overflow: "hidden" }}>
-                                                                                    <div
-                                                                                        style={{
-                                                                                            width: `${downloadProgress?.percentage || 0}%`,
-                                                                                            height: "100%",
-                                                                                            background: "var(--color-accent, #3b82f6)",
-                                                                                            transition: "width 0.2s linear",
-                                                                                        }}
-                                                                                    />
-                                                                                </div>
-                                                                                {downloadProgress?.total ? (
-                                                                                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textAlign: "right" }}>
-                                                                                        {(downloadProgress.downloaded / (1024 * 1024)).toFixed(1)} MB / {(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB
-                                                                                    </div>
-                                                                                ) : null}
-                                                                            </div>
-                                                                        ) : (
-                                                                            <button
-                                                                                type="button"
-                                                                                className="btn btn-primary"
-                                                                                style={{ width: "100%", justifyContent: "center", display: "flex", alignItems: "center", gap: 6 }}
-                                                                                onClick={handleDownloadLiteRTModel}
-                                                                            >
-                                                                                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>download</span>
-                                                                                Download Gemma 4 E2B (.litertlm)
-                                                                            </button>
-                                                                        )}
-                                                                        <div className="settings-note" style={{ marginTop: 6, fontSize: "0.75rem" }}>
-                                                                            Models are saved permanently to the app Documents /models folder.
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                <label className="settings-field">
-                                                                    <span>Runtime Mode</span>
-                                                                    <select
-                                                                        value={providerSettings.liteRTRuntimeMode}
-                                                                        onChange={e => setProviderSettings(prev => ({
-                                                                            ...prev,
-                                                                            liteRTRuntimeMode: e.target.value as "ondevice" | "server",
-                                                                            model: "",
-                                                                        }))}
-                                                                    >
-                                                                        <option value="ondevice">On-device only</option>
-                                                                        <option value="server" disabled={isMobilePlatform}>On-device + OpenAI server (desktop)</option>
-                                                                    </select>
-                                                                </label>
-                                                                {isMobilePlatform && (
-                                                                    <div className="settings-note">
-                                                                        Mobile inference stays loopback-only. Enable the app Web Server below to provide authenticated remote translation backed by LiteRT-LM.
-                                                                    </div>
-                                                                )}
-                                                                {providerSettings.liteRTRuntimeMode === "server" && (
-                                                                    <div className="settings-note">
-                                                                        The raw LiteRT-LM endpoint listens on all network interfaces and has no authentication. Use the app Web Server below for password-protected remote translation.
-                                                                    </div>
-                                                                )}
-                                                                <label className="settings-field">
-                                                                    <span>Runtime Port</span>
-                                                                    <input
-                                                                        type="text"
-                                                                        inputMode="numeric"
-                                                                        pattern="[0-9]*"
-                                                                        value={providerSettings.liteRTPort}
-                                                                        onChange={e => {
-                                                                            const port = Math.max(1, Math.min(65535, Number(e.target.value.replace(/[^\d]/g, "")) || 9379));
-                                                                            setProviderSettings(prev => ({
-                                                                                ...prev,
-                                                                                liteRTPort: port,
-                                                                                endpoint: `http://127.0.0.1:${port}`,
-                                                                                model: "",
-                                                                            }));
-                                                                        }}
-                                                                    />
-                                                                </label>
-                                                                <label className="settings-field">
-                                                                    <span>Runtime Binary</span>
-                                                                    <input
-                                                                        type="text"
-                                                                        value={providerSettings.liteRTRuntimePath}
-                                                                        onChange={e => setProviderSettings(prev => ({
-                                                                            ...prev,
-                                                                            liteRTRuntimePath: e.target.value,
-                                                                            model: "",
-                                                                        }))}
-                                                                        placeholder="Bundled runtime (optional override)"
-                                                                    />
-                                                                </label>
-                                                            </>
-                                                        )}
-                                                        {providerSettings.mode !== "litertlm" && (
-                                                            <div className="settings-field">
-                                                                <span>Model</span>
-                                                                <div className="toolbar-group model-group">
-                                                                    <select value={providerSettings.model} onChange={e => {
-                                                                        handleSelectModel(e.target.value);
-                                                                    }} disabled={isLoadingModels}>
-                                                                        <option value="">Select a Model</option>
-                                                                        {models.map(model => (
-                                                                            <option key={model.id} value={model.id}>
-                                                                                {model.displayName || model.id}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
-                                                                    <button className="icon-btn" onClick={() => fetchModels()} disabled={isLoadingModels} title="Refresh Models">
-                                                                        <span className="material-symbols-outlined">refresh</span>
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        <div className="settings-field">
-                                                            <span>Smart Chunking</span>
-                                                            <label className="settings-checkbox">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={providerSettings.enableSmartChunking}
-                                                                    onChange={e => setProviderSettings(prev => ({
-                                                                        ...prev,
-                                                                        enableSmartChunking: e.target.checked,
-                                                                    }))}
-                                                                />
-                                                                <span>Enabled</span>
-                                                            </label>
-                                                        </div>
-                                                        <label className="settings-field">
-                                                            <span>Chunk Size</span>
-                                                            <input
-                                                                type="text"
-                                                                inputMode="numeric"
-                                                                pattern="[0-9]*"
-                                                                value={smartChunkSizeDraft}
-                                                                disabled={!providerSettings.enableSmartChunking}
-                                                                onChange={e => {
-                                                                    setSmartChunkSizeDraft(e.target.value.replace(/[^\d]/g, ""));
-                                                                }}
-                                                                onBlur={commitSmartChunkSizeDraft}
-                                                                placeholder="2000"
-                                                            />
-                                                        </label>
-                                                        <label className="settings-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={providerSettings.forceShowReasoning}
-                                                                onChange={e => setProviderSettings(prev => ({
-                                                                    ...prev,
-                                                                    forceShowReasoning: e.target.checked,
-                                                                }))}
-                                                            />
-                                                            <span>Force show reasoning control</span>
-                                                        </label>
-                                                        <label className="settings-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={effectiveTopicAwarePostEditEnabled}
-                                                                disabled={fastTranslationEnabled}
-                                                                onChange={e => setProviderSettings(prev => ({
-                                                                    ...prev,
-                                                                    enableTopicAwarePostEdit: e.target.checked,
-                                                                }))}
-                                                            />
-                                                            <span>Context-Aware Smart Post-Editing</span>
-                                                        </label>
-                                                        <label className="settings-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={providerSettings.forceShowTemperature}
-                                                                onChange={e => {
-                                                                    const isVisible = e.target.checked;
-                                                                    setProviderSettings(prev => ({
-                                                                        ...prev,
-                                                                        forceShowTemperature: isVisible,
-                                                                    }));
-                                                                    if (!isVisible) {
-                                                                        setShowTemperatureSlider(false);
-                                                                    }
-                                                                }}
-                                                            />
-                                                            <span>Show temperature control</span>
-                                                        </label>
-                                                    </>
-                                                )}
-                                                <label className="settings-field">
-                                                    <span>Theme</span>
-                                                    <select
-                                                        value={themeMode}
-                                                        onChange={e => {
-                                                            const next = e.target.value as ThemeMode;
-                                                            setThemeMode(next);
-                                                        }}
-                                                    >
-                                                        <option value="auto">Auto (System)</option>
-                                                        <option value="light">Light</option>
-                                                        <option value="dark">Dark</option>
-                                                    </select>
-                                                </label>
-                                                {settingsStatus && (
-                                                    <div className={`settings-status ${settingsStatus.toLowerCase().includes("could not load") ? "is-error" : "is-ok"}`}>
-                                                        {settingsStatus}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </section>
-                                        {!isMobilePlatform && (
-                                            <section className="settings-panel settings-panel-server">
-                                                <div className="settings-panel-header">
-                                                    <div className="settings-panel-title">Server</div>
-                                                    <div className="settings-panel-subtitle">Browser access, auth, and TLS certificates</div>
                                                 </div>
-                                                <div className="settings-grid">
-                                                    <div className="settings-field">
-                                                        <span>Web Server</span>
-                                                        <label className="settings-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={webServerSettings.enabled}
-                                                                onChange={e => setWebServerSettings(prev => ({ ...prev, enabled: e.target.checked }))}
-                                                                disabled={isBrowserMode}
-                                                            />
-                                                            <span>Enabled</span>
-                                                        </label>
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Enable Web Server</span>
+                                                        <span className="settings-toggle-desc">Start listening for incoming web browser connections.</span>
                                                     </div>
-                                                    <label className="settings-field">
-                                                        <span>Port</span>
+                                                    <label className="switch-control">
                                                         <input
-                                                            type="text"
-                                                            inputMode="numeric"
-                                                            pattern="[0-9]*"
-                                                            value={webServerSettings.port}
-                                                            onChange={e => setWebServerSettings(prev => ({
-                                                                ...prev,
-                                                                port: e.target.value.replace(/[^\d]/g, "") || "8080",
-                                                            }))}
+                                                            type="checkbox"
+                                                            checked={webServerSettings.enabled}
+                                                            onChange={e => setWebServerSettings(prev => ({ ...prev, enabled: e.target.checked }))}
                                                             disabled={isBrowserMode}
-                                                            placeholder="8080"
                                                         />
+                                                        <span className="switch-slider" />
                                                     </label>
-                                                    <div className="settings-field">
-                                                        <span>Password</span>
-                                                        <div className="settings-inline-action">
-                                                            <input
-                                                                type="password"
-                                                                value={webServerPasswordDraft}
-                                                                onChange={e => setWebServerPasswordDraft(e.target.value)}
-                                                                disabled={isBrowserMode}
-                                                                placeholder={webServerSettings.hasPassword ? "Leave blank to keep current password" : "Required when enabling the web server"}
-                                                            />
-                                                            <button
-                                                                className="btn btn-secondary btn-small"
-                                                                type="button"
-                                                                onClick={handleSaveWebServerSettings}
-                                                                disabled={isBrowserMode || isSavingWebServerSettings || webServerPasswordDraft.trim() === ""}
-                                                                title="Save Password"
-                                                            >
-                                                                {isSavingWebServerSettings ? "Saving..." : "Save"}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                    <div className="settings-field">
-                                                        <span>TLS / HTTPS</span>
-                                                        <label className="settings-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={webServerSettings.useTls}
-                                                                onChange={e => setWebServerSettings(prev => ({ ...prev, useTls: e.target.checked }))}
-                                                                disabled={isBrowserMode}
-                                                            />
-                                                            <span>Use certificates from the app folder</span>
-                                                        </label>
-                                                    </div>
-                                                    <label className="settings-field">
-                                                        <span>Domain</span>
-                                                        <input
-                                                            type="text"
-                                                            value={webServerSettings.certDomain}
-                                                            onChange={e => setWebServerSettings(prev => ({ ...prev, certDomain: e.target.value }))}
-                                                            disabled={isBrowserMode || !webServerSettings.useTls}
-                                                            placeholder="localhost"
-                                                        />
-                                                    </label>
-                                                    <div className="settings-field settings-field-details">
-                                                        <span>Certificate Folder</span>
-                                                        <div className="settings-note">{webServerSettings.certificateDirectory || "Loaded when the desktop app starts."}</div>
-                                                        <div className="toolbar-group model-group">
-                                                            <button className="btn btn-secondary btn-small" type="button" onClick={handleOpenCertificateFolder} disabled={isBrowserMode}>
-                                                                Open Folder
-                                                            </button>
-                                                            <button className="btn btn-secondary btn-small" type="button" onClick={handleSaveWebServerSettings} disabled={isBrowserMode || isSavingWebServerSettings}>
-                                                                {isSavingWebServerSettings ? "Saving..." : "Apply Web Server"}
-                                                            </button>
-                                                        </div>
-                                                        <details className="settings-help">
-                                                            <summary>Certificate setup help</summary>
-                                                            <div>
-                                                                Copy certificate files into <code>DKST Translator AI/certs</code>. Default names: <code>cert.pem</code> and <code>key.pem</code>. Domain-specific names like <code>{'{domain}.crt'}</code> + <code>{'{domain}.key'}</code> are also supported.
-                                                            </div>
-                                                        </details>
-                                                    </div>
-                                                    {webServerStatus && (
-                                                        <div className={`settings-status ${webServerStatus.toLowerCase().includes("could not") || webServerStatus.toLowerCase().includes("error") ? "is-error" : "is-ok"}`}>
-                                                            {webServerStatus}
-                                                        </div>
-                                                    )}
                                                 </div>
-                                            </section>
-                                        )}
-                                        {!isMobilePlatform && !isBrowserMode && isDevelopmentBuild && (
-                                            <section className="settings-section">
-                                                <div className="settings-section-title">Developer Tools</div>
-                                                <div className="settings-grid">
-                                                    <div className="settings-field">
-                                                        <span>Debug Studio</span>
+                                                <div className="settings-divider" />
+                                                <div className="settings-input-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Server Port</span>
+                                                        <span className="settings-toggle-desc">Port number for web server (default: 8080).</span>
+                                                    </div>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        className="settings-input-numeric"
+                                                        value={webServerSettings.port}
+                                                        onChange={e => setWebServerSettings(prev => ({
+                                                            ...prev,
+                                                            port: e.target.value.replace(/[^\d]/g, "") || "8080",
+                                                        }))}
+                                                        disabled={isBrowserMode}
+                                                        placeholder="8080"
+                                                    />
+                                                </div>
+                                                <div className="settings-divider" />
+                                                <div className="settings-input-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Web Password</span>
+                                                        <span className="settings-toggle-desc">{webServerSettings.hasPassword ? "Password protection is active." : "Set a password for web browser access."}</span>
+                                                    </div>
+                                                    <div style={{ display: "flex", gap: 6 }}>
+                                                        <input
+                                                            type="password"
+                                                            className="settings-input-styled"
+                                                            style={{ width: 140 }}
+                                                            value={webServerPasswordDraft}
+                                                            onChange={e => setWebServerPasswordDraft(e.target.value)}
+                                                            disabled={isBrowserMode}
+                                                            placeholder={webServerSettings.hasPassword ? "New password" : "Required"}
+                                                        />
                                                         <button
                                                             className="btn btn-secondary btn-small"
                                                             type="button"
-                                                            onClick={handleOpenDebugStudioWindow}
+                                                            onClick={handleSaveWebServerSettings}
+                                                            disabled={isBrowserMode || isSavingWebServerSettings || webServerPasswordDraft.trim() === ""}
                                                         >
-                                                            Open Debug Studio
+                                                            {isSavingWebServerSettings ? "Saving..." : "Save"}
                                                         </button>
                                                     </div>
                                                 </div>
-                                            </section>
-                                        )}
-                                    </div>
-                                )}
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-card-header">
+                                                    <span className="material-symbols-outlined">security</span>
+                                                    <div>
+                                                        <div className="settings-card-title">TLS / HTTPS Encryption</div>
+                                                        <div className="settings-card-subtitle">Serve encrypted HTTPS traffic using TLS certificates from the app folder.</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-toggle-row">
+                                                    <div className="settings-toggle-text">
+                                                        <span className="settings-toggle-title">Enable HTTPS</span>
+                                                        <span className="settings-toggle-desc">Use cert.pem and key.pem from application support folder.</span>
+                                                    </div>
+                                                    <label className="switch-control">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={webServerSettings.useTls}
+                                                            onChange={e => setWebServerSettings(prev => ({ ...prev, useTls: e.target.checked }))}
+                                                            disabled={isBrowserMode}
+                                                        />
+                                                        <span className="switch-slider" />
+                                                    </label>
+                                                </div>
+                                                {webServerSettings.useTls && (
+                                                    <>
+                                                        <div className="settings-divider" />
+                                                        <div className="settings-input-row">
+                                                            <div className="settings-toggle-text">
+                                                                <span className="settings-toggle-title">Certificate Domain</span>
+                                                                <span className="settings-toggle-desc">Domain name for certificate match.</span>
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                className="settings-input-styled"
+                                                                style={{ width: 160 }}
+                                                                value={webServerSettings.certDomain}
+                                                                onChange={e => setWebServerSettings(prev => ({ ...prev, certDomain: e.target.value }))}
+                                                                disabled={isBrowserMode}
+                                                                placeholder="localhost"
+                                                            />
+                                                        </div>
+                                                    </>
+                                                )}
+                                                <div className="settings-divider" />
+                                                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-secondary btn-small"
+                                                        onClick={handleOpenCertificateFolder}
+                                                        disabled={isBrowserMode}
+                                                    >
+                                                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>folder</span>
+                                                        Open Certificate Folder
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* --- Tab 6: About --- */}
+                                    {settingsActiveTab === 'about' && (
+                                        <div className="settings-section-view">
+                                            <div className="settings-section-header">
+                                                <span className="settings-section-eyebrow">APPLICATION INFO</span>
+                                                <h2 className="settings-section-title">About</h2>
+                                                <p className="settings-section-subtitle">Version details, system environment, and translation capabilities.</p>
+                                            </div>
+
+                                            <div className="settings-card-group">
+                                                <div className="settings-about-brand">
+                                                    <div className="settings-about-logo">
+                                                        <span className="material-symbols-outlined">translate</span>
+                                                    </div>
+                                                    <div>
+                                                        <div className="settings-about-app-name">DKST Translator AI</div>
+                                                        <div className="settings-about-version">Version 1.0.0 (Universal)</div>
+                                                    </div>
+                                                </div>
+                                                <div className="settings-divider" />
+                                                <div className="settings-about-grid">
+                                                    <div className="settings-about-item">
+                                                        <span className="settings-about-label">Platform</span>
+                                                        <span className="settings-about-val">{isApplePlatform ? (isMobilePlatform ? "iOS / iPadOS" : "macOS") : (isMobilePlatform ? "Android" : "Desktop")}</span>
+                                                    </div>
+                                                    <div className="settings-about-item">
+                                                        <span className="settings-about-label">On-Device AI</span>
+                                                        <span className="settings-about-val">LiteRT-LM (Gemma 4 E2B)</span>
+                                                    </div>
+                                                    <div className="settings-about-item">
+                                                        <span className="settings-about-label">Native Engines</span>
+                                                        <span className="settings-about-val">{isApplePlatform ? "Apple Translation" : isMLKitPlatform ? "Google ML Kit" : "None"}</span>
+                                                    </div>
+                                                    <div className="settings-about-item">
+                                                        <span className="settings-about-label">PDF Engine</span>
+                                                        <span className="settings-about-val">GoPDF + Dynamic CJK Renderer</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Footer Action Bar */}
+                            <div className="settings-modal-footer">
+                                <div className="settings-footer-status">
+                                    {settingsStatus || "All preferences are saved automatically"}
+                                </div>
+                                <div className="settings-footer-actions">
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => setShowModelModal(false)}
+                                    >
+                                        Close
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={() => {
+                                            setShowModelModal(false);
+                                            showSavedToastMessage("Saved changes");
+                                        }}
+                                    >
+                                        Save changes
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

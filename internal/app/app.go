@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -37,6 +39,8 @@ type App struct {
 	activePDF         file.PDFDocument
 	pdfRunMu          sync.Mutex
 	pdfCheckpointMu   sync.Mutex
+	downloadMu        sync.Mutex
+	downloadCancel    context.CancelFunc
 }
 
 // NewApp creates a new App application struct
@@ -214,11 +218,88 @@ func (a *App) GetLiteRTModelsDir() (string, error) {
 	return litertlm.GetModelsDir()
 }
 
+func (a *App) ImportLiteRTModel() (litertlm.LocalModelInfo, error) {
+	if a.wails == nil || a.wails.Dialog == nil {
+		return litertlm.LocalModelInfo{}, errors.New("file dialog unavailable")
+	}
+	selectedPath, err := a.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title: "Import LiteRT-LM Model (.litertlm)",
+		Filters: []application.FileFilter{
+			{DisplayName: "LiteRT-LM Models (*.litertlm)", Pattern: "*.litertlm"},
+			{DisplayName: "Legacy AI Edge Models (*.bin)", Pattern: "*.bin"},
+		},
+	}).PromptForSingleSelection()
+	if err != nil {
+		return litertlm.LocalModelInfo{}, err
+	}
+	if strings.TrimSpace(selectedPath) == "" {
+		return litertlm.LocalModelInfo{}, nil
+	}
+	return litertlm.ImportModelFile(selectedPath)
+}
+
+func (a *App) ImportLiteRTModelFromPath(sourcePath string) (litertlm.LocalModelInfo, error) {
+	return litertlm.ImportModelFile(sourcePath)
+}
+
+func (a *App) DeleteLiteRTModel(modelPathOrName string) (bool, error) {
+	if err := litertlm.DeleteModelFile(modelPathOrName); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (a *App) ConfirmDeleteLiteRTModel(modelName string) (bool, error) {
+	if a.wails == nil || a.wails.Dialog == nil {
+		return true, nil
+	}
+	confirmed := false
+	dialog := a.wails.Dialog.Question().
+		SetTitle("Delete LiteRT-LM Model").
+		SetMessage(fmt.Sprintf("Are you sure you want to delete the model %q from storage?", modelName))
+	dialog.AddButton("Delete").OnClick(func() { confirmed = true })
+	cancel := dialog.AddButton("Cancel")
+	dialog.SetDefaultButton(cancel)
+	dialog.SetCancelButton(cancel)
+	dialog.Show()
+	return confirmed, nil
+}
+
 func (a *App) DownloadLiteRTModel(repoOrURL string, token string) (string, error) {
-	return litertlm.DownloadModel(context.Background(), repoOrURL, token, func(progress litertlm.DownloadProgress) {
+	a.downloadMu.Lock()
+	if a.downloadCancel != nil {
+		a.downloadCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.downloadCancel = cancel
+	a.downloadMu.Unlock()
+
+	defer func() {
+		a.downloadMu.Lock()
+		a.downloadCancel = nil
+		a.downloadMu.Unlock()
+	}()
+
+	return litertlm.DownloadModel(ctx, repoOrURL, token, func(progress litertlm.DownloadProgress) {
 		if a.wails != nil && a.wails.Event != nil {
 			a.wails.Event.Emit("litert:download-progress", progress)
 		}
 	})
+}
+
+func (a *App) CancelLiteRTDownload() bool {
+	a.downloadMu.Lock()
+	defer a.downloadMu.Unlock()
+	if a.downloadCancel != nil {
+		a.downloadCancel()
+		a.downloadCancel = nil
+		if a.wails != nil && a.wails.Event != nil {
+			a.wails.Event.Emit("litert:download-progress", litertlm.DownloadProgress{
+				Status: "cancelled",
+			})
+		}
+		return true
+	}
+	return false
 }
 

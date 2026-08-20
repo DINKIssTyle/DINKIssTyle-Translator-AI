@@ -183,6 +183,11 @@ tasks:
         fi
       - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
       - |
+        if [ -d build/fonts ]; then
+          mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/fonts"
+          cp build/fonts/*.ttf "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/fonts/" 2>/dev/null || true
+        fi
+      - |
         if [ -d third_party/litertlm ]; then
           cp -R third_party/litertlm "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Resources/"
         fi

@@ -41,6 +41,15 @@ func main() {
 		panic(err)
 	}
 
+	// Copy NanumGothic.ttf font
+	fontSrc := filepath.Join("build", "fonts", "NanumGothic.ttf")
+	fontDest := filepath.Join("build", "ios", "xcode", "main", "NanumGothic.ttf")
+	if fontData, err := os.ReadFile(fontSrc); err == nil {
+		if err := os.WriteFile(fontDest, fontData, 0o644); err != nil {
+			panic(err)
+		}
+	}
+
 	// Copy Assets.xcassets if present
 	assetsSrc := filepath.Join("build", "ios", "Assets.xcassets")
 	assetsDest := filepath.Join("build", "ios", "xcode", "main", "Assets.xcassets")
@@ -160,17 +169,17 @@ func main() {
 	// PBXBuildFile section
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };",
-		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };\n\t\tC0DEBEEF00000000000000F8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000108 /* Assets.xcassets */; };\n\t\tC0DEBEEF00000000000000F9 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000109 /* LaunchScreen.storyboard */; };\n\t\tC0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };\n\t\tC0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };\n\t\tC0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000212 /* TranslationBridge.swift */; };\n\t\tC0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };\n\t\tC0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };\n\t\tC0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };")
+		"C0DEBEEF0000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000002 /* main.m */; };\n\t\tC0DEBEEF00000000000000F8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000108 /* Assets.xcassets */; };\n\t\tC0DEBEEF00000000000000F9 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000109 /* LaunchScreen.storyboard */; };\n\t\tC0DEBEEF00000000000000FA /* NanumGothic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF000000000000010A /* NanumGothic.ttf */; };\n\t\tC0DEBEEF0000000000000201 /* LiteRTLMServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000202 /* LiteRTLMServer.swift */; };\n\t\tC0DEBEEF0000000000000203 /* LiteRTLMNative in Frameworks */ = {isa = PBXBuildFile; productRef = C0DEBEEF0000000000000204 /* LiteRTLMNative */; };\n\t\tC0DEBEEF0000000000000211 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000212 /* TranslationBridge.swift */; };\n\t\tC0DEBEEF0000000000000213 /* Translation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000214 /* Translation.framework */; settings = {ATTRIBUTES = (Weak, ); }; };\n\t\tC0DEBEEF0000000000000215 /* NaturalLanguage.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000216 /* NaturalLanguage.framework */; };\n\t\tC0DEBEEF0000000000000217 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DEBEEF0000000000000218 /* SwiftUI.framework */; };")
 
 	// PBXFileReference section
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };",
-		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };")
+		"C0DEBEEF0000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF000000000000010A /* NanumGothic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = NanumGothic.ttf; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteRTLMServer.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = \"<group>\"; };\n\t\tC0DEBEEF0000000000000214 /* Translation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Translation.framework; path = System/Library/Frameworks/Translation.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000216 /* NaturalLanguage.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NaturalLanguage.framework; path = System/Library/Frameworks/NaturalLanguage.framework; sourceTree = SDKROOT; };\n\t\tC0DEBEEF0000000000000218 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };")
 
 	// Group children
 	text = replaceOnce(text,
 		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,",
-		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */,\n\t\t\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */,\n\t\t\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */,\n\t\t\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,")
+		"C0DEBEEF0000000000000002 /* main.m */,\n\t\t\t\tC0DEBEEF0000000000000108 /* Assets.xcassets */,\n\t\t\t\tC0DEBEEF0000000000000109 /* LaunchScreen.storyboard */,\n\t\t\t\tC0DEBEEF000000000000010A /* NanumGothic.ttf */,\n\t\t\t\tC0DEBEEF0000000000000202 /* LiteRTLMServer.swift */,\n\t\t\t\tC0DEBEEF0000000000000212 /* TranslationBridge.swift */,\n\t\t\t\tC0DEBEEF0000000000000003 /* Info.plist */,")
 
 	// Resources build phase
 	resourcesSection := `/* Begin PBXResourcesBuildPhase section */
@@ -180,6 +189,7 @@ func main() {
 			files = (
 				C0DEBEEF00000000000000F8 /* Assets.xcassets in Resources */,
 				C0DEBEEF00000000000000F9 /* LaunchScreen.storyboard in Resources */,
+				C0DEBEEF00000000000000FA /* NanumGothic.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -26,9 +26,9 @@ var (
 	emptyDebugSectionPattern  = regexp.MustCompile(`(?m)^(Protected names and terms|User glossary|Chunk label|Previous context|Opening source paragraph|Opening translated paragraph|Recent overlap):\n(?:[ \t]*\n)?`)
 	inlineProofreadPattern    = regexp.MustCompile(`(?is)\{draft:\s*(.*?)\s*\}\s*\{review:\s*(.*?)\s*\}\s*\{final:\s*(.*?)\s*\}\s*$`)
 	fencedCodeBlockPattern    = regexp.MustCompile("(?s)^```[a-zA-Z0-9_-]*\\s*(.*?)\\s*```$")
-	pdfPageMarkerLinePattern  = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_PAGE:\d+\]\]\s*$`)
-	pdfBlockMarkerLinePattern = regexp.MustCompile(`(?m)^\s*(\[\[DKST_PDF_BLOCK:\d+:\d+\]\])\s*$`)
-	pdfBlockRoleLinePattern   = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_ROLE:(heading|body|caption)\]\]\s*$`)
+	pdfPageMarkerLinePattern  = regexp.MustCompile("(?m)^\\s*[*#`]*\\s*(\\[\\[DKST_PDF_PAGE:\\d+\\]\\])\\s*[*#`]*\\s*$")
+	pdfBlockMarkerLinePattern = regexp.MustCompile("(?m)^\\s*[*#`]*\\s*(\\[\\[DKST_PDF_BLOCK:\\d+:\\d+\\]\\])\\s*[*#`]*\\s*$")
+	pdfBlockRoleLinePattern   = regexp.MustCompile("(?m)^\\s*[*#`]*\\s*\\[\\[DKST_PDF_ROLE:(heading|body|caption)\\]\\]\\s*[*#`]*\\s*$")
 )
 
 type Client struct {
@@ -875,8 +875,151 @@ func splitNativeUnits(source string) []nativeTextUnit {
 	return units
 }
 
+func cleanNativeSourceText(source string) string {
+	cleaned := pdfPageMarkerLinePattern.ReplaceAllString(source, "")
+	cleaned = pdfBlockMarkerLinePattern.ReplaceAllString(cleaned, "")
+	cleaned = pdfBlockRoleLinePattern.ReplaceAllString(cleaned, "")
+	return strings.TrimSpace(cleaned)
+}
+
+func (h *translationHarness) runNativePDF() (string, TranslationStatsPayload, error) {
+	chunks := h.plan.chunks
+	if len(chunks) == 0 {
+		return "", TranslationStatsPayload{}, nil
+	}
+
+	engine := nativeEngineName(h.reqData.Settings.Mode)
+	svc := translation.NewService()
+	totalChunks := len(chunks)
+
+	if h.mode.emitLifecycle {
+		h.client.emitProgress(
+			"native_translation",
+			"Translating PDF with native engine",
+			fmt.Sprintf("Translating %d blocks with on-device engine", totalChunks),
+			nil,
+			true,
+		)
+	}
+
+	startTime := time.Now()
+	type chunkBatch struct {
+		indices []int
+		texts   []string
+	}
+	var batches []chunkBatch
+	var currentBatch chunkBatch
+	currentChars := 0
+
+	for i, chunk := range chunks {
+		cleanText := strings.TrimSpace(chunk.Text)
+		cleanText = pdfBlockRoleLinePattern.ReplaceAllString(cleanText, "")
+		cleanText = pdfPageMarkerLinePattern.ReplaceAllString(cleanText, "")
+		cleanText = pdfBlockMarkerLinePattern.ReplaceAllString(cleanText, "")
+		cleanText = strings.TrimSpace(cleanText)
+		runesCount := len([]rune(cleanText))
+
+		if len(currentBatch.indices) > 0 && (len(currentBatch.indices) >= 8 || currentChars+runesCount > 800) {
+			batches = append(batches, currentBatch)
+			currentBatch = chunkBatch{}
+			currentChars = 0
+		}
+		currentBatch.indices = append(currentBatch.indices, i)
+		currentBatch.texts = append(currentBatch.texts, cleanText)
+		currentChars += runesCount
+	}
+	if len(currentBatch.indices) > 0 {
+		batches = append(batches, currentBatch)
+	}
+
+	totalBatches := len(batches)
+	for bIdx, batch := range batches {
+		if h.reqCtx.Err() != nil {
+			return "", TranslationStatsPayload{}, h.reqCtx.Err()
+		}
+
+		results, err := svc.Translate(translation.Request{
+			Engine:         engine,
+			Texts:          batch.texts,
+			SourceLanguage: h.reqData.SourceLang,
+			TargetLanguage: h.reqData.TargetLang,
+		})
+		if err != nil {
+			return "", TranslationStatsPayload{}, err
+		}
+		if h.reqCtx.Err() != nil {
+			return "", TranslationStatsPayload{}, h.reqCtx.Err()
+		}
+
+		for i, origIndex := range batch.indices {
+			translatedPiece := batch.texts[i]
+			if i < len(results) && results[i] != "" {
+				translatedPiece = results[i]
+			}
+			chunk := chunks[origIndex]
+			blockOutput := translatedPiece
+			if chunk.PDFBlockMarker != "" {
+				blockOutput = chunk.PDFBlockMarker + "\n" + translatedPiece
+			}
+			if h.finalText.Len() > 0 {
+				h.finalText.WriteString("\n\n")
+			}
+			h.finalText.WriteString(blockOutput)
+
+			if h.mode.emitLifecycle {
+				chunkPayload := TranslationChunkPayload{
+					ChunkIndex:  origIndex,
+					Phase:       "final",
+					Text:        blockOutput,
+					FinalClosed: true,
+				}
+				h.client.emitChunk(chunkPayload)
+			}
+			h.emitCompletedPDFPage(origIndex)
+		}
+
+		if h.mode.emitLifecycle {
+			progressPercent := float64(bIdx+1) / float64(totalBatches)
+			h.client.emitProgress(
+				"native_translation",
+				fmt.Sprintf("Translating PDF blocks (%d/%d batches)", bIdx+1, totalBatches),
+				fmt.Sprintf("Completed %d of %d batches (%.0f%%)", bIdx+1, totalBatches, progressPercent*100),
+				&progressPercent,
+				true,
+			)
+		}
+	}
+
+	fullTranslated := h.finalText.String()
+	elapsed := time.Since(startTime).Seconds()
+
+	if h.mode.emitLifecycle {
+		h.client.emitProgress(
+			"completed",
+			"Translation completed",
+			"Translation finished successfully",
+			nil,
+			false,
+		)
+	}
+
+	stats := TranslationStatsPayload{
+		TimeToFirstTokenSeconds: elapsed,
+		TotalOutputTokens:       len(strings.Fields(fullTranslated)),
+	}
+	if h.mode.emitLifecycle {
+		h.client.emitStatsPayload(stats)
+	}
+	return fullTranslated, stats, nil
+}
+
 func (h *translationHarness) runNative() (string, TranslationStatsPayload, error) {
-	units := splitNativeUnits(h.reqData.SourceText)
+	if strings.EqualFold(h.reqData.DocumentType, "pdf") || (len(h.plan.chunks) > 0 && h.plan.chunks[0].PDFBlockMarker != "") {
+		return h.runNativePDF()
+	}
+
+	cleanSource := cleanNativeSourceText(h.reqData.SourceText)
+	units := splitNativeUnits(cleanSource)
 	if len(units) == 0 {
 		return "", TranslationStatsPayload{}, nil
 	}

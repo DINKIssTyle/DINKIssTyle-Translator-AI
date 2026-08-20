@@ -25,9 +25,15 @@ private actor DKSTLiteRTEngine {
     if let configured = configuredModelURL, FileManager.default.fileExists(atPath: configured.path) {
       return configured
     }
-    // Check Documents/models
+    var searchDirs: [URL] = []
+    if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+      searchDirs.append(appSupport.appendingPathComponent("DKST Translator AI").appendingPathComponent("models"))
+      searchDirs.append(appSupport.appendingPathComponent("models"))
+    }
     if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-      let modelsDir = docs.appendingPathComponent("models")
+      searchDirs.append(docs.appendingPathComponent("models"))
+    }
+    for modelsDir in searchDirs {
       if let files = try? FileManager.default.contentsOfDirectory(at: modelsDir, includingPropertiesForKeys: nil) {
         let litertFiles = files.filter { $0.pathExtension.lowercased() == "litertlm" }
         if let gpuModel = litertFiles.first(where: { $0.lastPathComponent.contains("-gpu") }) {

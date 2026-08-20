@@ -3,6 +3,7 @@
 package file
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -23,13 +24,16 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+//go:embed fonts/NanumGothic.ttf
+var embeddedNanumGothic []byte
+
 const (
 	pdfPageMarkerFormat  = "[[DKST_PDF_PAGE:%04d]]"
 	pdfBlockMarkerFormat = "[[DKST_PDF_BLOCK:%04d:%04d]]"
 )
 
-var pdfPageMarkerPattern = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_PAGE:(\d+)\]\]\s*$`)
-var pdfBlockMarkerPattern = regexp.MustCompile(`(?m)^\s*\[\[DKST_PDF_BLOCK:(\d+):(\d+)\]\]\s*$`)
+var pdfPageMarkerPattern = regexp.MustCompile(`\[\[DKST_PDF_PAGE:(\d+)\]\]`)
+var pdfBlockMarkerPattern = regexp.MustCompile(`\[\[DKST_PDF_BLOCK:(\d+):(\d+)\]\]`)
 
 type PDFTextBlock = pdfengine.TextBlock
 type PDFTextRegion = pdfengine.TextRegion
@@ -628,14 +632,26 @@ func splitTranslatedPDFBlocks(text string) (map[string]string, int) {
 		if index+1 < len(matches) {
 			end = matches[index+1][0]
 		}
-		translated := strings.TrimSpace(pdfPageMarkerPattern.ReplaceAllString(text[match[1]:end], ""))
+		rawSegment := text[match[1]:end]
+		cleaned := pdfPageMarkerPattern.ReplaceAllString(rawSegment, "")
+		cleaned = cleanTranslatedBlockText(cleaned)
 		id := fmt.Sprintf("p%04d-b%04d", pageNumber, blockNumber)
-		if previous := result[id]; len([]rune(previous)) > len([]rune(translated)) {
+		if previous := result[id]; len([]rune(previous)) > len([]rune(cleaned)) {
 			continue
 		}
-		result[id] = translated
+		result[id] = cleaned
 	}
 	return result, len(matches)
+}
+
+func cleanTranslatedBlockText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.Trim(text, "*#` \t\r\n")
+	text = strings.TrimPrefix(text, "-->")
+	text = strings.TrimPrefix(text, ":")
+	text = strings.TrimPrefix(text, "-")
+	text = strings.TrimSuffix(text, "<!--")
+	return strings.TrimSpace(text)
 }
 
 type pdfBlockRenderResult struct {
@@ -1231,13 +1247,76 @@ func normalizedPageSize(page PDFPage) gopdf.Rect {
 	return gopdf.Rect{W: width, H: height}
 }
 
+func validatePDFFont(path string) bool {
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return false
+	}
+	d := &gopdf.GoPdf{}
+	d.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
+	d.AddPage()
+	if err := d.AddTTFFont("test", path); err != nil {
+		return false
+	}
+	if err := d.SetFont("test", "", 12); err != nil {
+		return false
+	}
+	w, err := d.MeasureTextWidth("한글")
+	return err == nil && w > 15
+}
+
 func findPDFFont() (string, error) {
+	// 1. Embedded fallback font: extract to temp cache and validate
+	if len(embeddedNanumGothic) > 0 {
+		cachePath := filepath.Join(os.TempDir(), "dkst-nanumgothic.ttf")
+		if info, err := os.Stat(cachePath); err != nil || info.Size() != int64(len(embeddedNanumGothic)) {
+			_ = os.WriteFile(cachePath, embeddedNanumGothic, 0o644)
+		}
+		if validatePDFFont(cachePath) {
+			return cachePath, nil
+		}
+	}
+
 	candidates := []string{}
+
+	// 2. Check app bundle or executable resources directory
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "NanumGothic.ttf"),
+			filepath.Join(exeDir, "fonts", "NanumGothic.ttf"),
+			filepath.Join(exeDir, "..", "Resources", "fonts", "NanumGothic.ttf"),
+			filepath.Join(exeDir, "..", "Resources", "NanumGothic.ttf"),
+			filepath.Join(exeDir, "..", "Resources", "fonts", "NotoSansCJK-Regular.ttf"),
+			filepath.Join(exeDir, "..", "Resources", "fonts", "Arial Unicode.ttf"),
+			filepath.Join(exeDir, "fonts", "NotoSansCJK-Regular.ttf"),
+			filepath.Join(exeDir, "fonts", "Arial Unicode.ttf"),
+		)
+	}
+	if docs := getDocumentsDir(); docs != "" {
+		candidates = append(candidates,
+			filepath.Join(docs, "fonts", "NanumGothic.ttf"),
+			filepath.Join(docs, "NanumGothic.ttf"),
+			filepath.Join(docs, "fonts", "NotoSansCJK-Regular.ttf"),
+			filepath.Join(docs, "fonts", "Arial Unicode.ttf"),
+		)
+	}
+
+	// 3. OS-specific system font locations
 	switch runtime.GOOS {
-	case "darwin":
+	case "darwin", "ios":
 		candidates = append(candidates,
 			"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-			"/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+			"/System/Library/Fonts/Supplemental/NanumGothic.ttf",
+			"/System/Library/Fonts/Supplemental/NotoSansKR-Regular.ttf",
+			"/Library/Fonts/NanumGothic.ttf",
+			"/Library/Fonts/Arial Unicode.ttf",
+		)
+	case "android":
+		candidates = append(candidates,
+			"/system/fonts/NotoSansCJK-Regular.ttc",
+			"/system/fonts/NotoSansKR-Regular.otf",
+			"/system/fonts/Roboto-Regular.ttf",
+			"/system/fonts/DroidSansFallback.ttf",
 		)
 	case "windows":
 		windowsDir := os.Getenv("WINDIR")
@@ -1247,22 +1326,30 @@ func findPDFFont() (string, error) {
 		candidates = append(candidates,
 			filepath.Join(windowsDir, "Fonts", "malgun.ttf"),
 			filepath.Join(windowsDir, "Fonts", "msgothic.ttf"),
+			filepath.Join(windowsDir, "Fonts", "arialuni.ttf"),
+			filepath.Join(windowsDir, "Fonts", "msyh.ttc"),
 			filepath.Join(windowsDir, "Fonts", "arial.ttf"),
+			filepath.Join(windowsDir, "Fonts", "segoeui.ttf"),
 		)
 	default:
 		candidates = append(candidates,
 			"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttf",
 			"/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf",
 			"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+			"/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
 			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+			"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+			"/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 		)
 	}
+
 	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if validatePDFFont(candidate) {
 			return candidate, nil
 		}
 	}
-	return "", errors.New("no compatible Unicode TrueType font was found; install Noto Sans CJK or Arial Unicode to create translated PDFs")
+
+	return "", errors.New("no compatible Unicode TrueType font was found; install Noto Sans CJK, Nanum Gothic or Arial Unicode to create translated PDFs")
 }
 
 func translatedPDFName(sourceName string) string {
