@@ -1505,6 +1505,7 @@ function App() {
     const [showSourceEditorModal, setShowSourceEditorModal] = useState(false);
     const [sourceEditorDraft, setSourceEditorDraft] = useState("");
     const [showTranslationViewerModal, setShowTranslationViewerModal] = useState(false);
+    const [translationViewerTab, setTranslationViewerTab] = useState<"translated_pdf" | "source_pdf" | "markdown">("translated_pdf");
     const [showReviewNotesModal, setShowReviewNotesModal] = useState(false);
     const [showTranslationSearchModal, setShowTranslationSearchModal] = useState(false);
     const [translationSearchDraft, setTranslationSearchDraft] = useState("");
@@ -3942,6 +3943,17 @@ function App() {
     };
 
     const handleOpenTranslationViewerModal = () => {
+        if (pdfDocument) {
+            if (translatedPDF) {
+                setTranslationViewerTab("translated_pdf");
+            } else if (cleanedTranslation.trim()) {
+                setTranslationViewerTab("markdown");
+            } else {
+                setTranslationViewerTab("source_pdf");
+            }
+        } else {
+            setTranslationViewerTab("markdown");
+        }
         setShowTranslationViewerModal(true);
     };
 
@@ -5192,7 +5204,7 @@ function App() {
                                 <button onClick={() => setShowReviewNotesModal(true)} title="Open Review Notes" disabled={!hasReviewNotes}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>summarize</span>
                                 </button>
-                                <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer" disabled={Boolean(pdfDocument)}>
+                                <button onClick={handleOpenTranslationViewerModal} title="Open Translation Viewer" disabled={!cleanedTranslation && !pdfDocument}>
                                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>pageview</span>
                                 </button>
                                 <button onClick={handleSaveFile} title={pdfDocument ? "Save Translated PDF" : "Save to File"} disabled={Boolean(pdfDocument && !translatedPDF)}>
@@ -5474,24 +5486,75 @@ function App() {
                     <div className="modal-overlay modal-overlay-centered modal-overlay-fullscreen" onClick={handleCloseTranslationViewerModal}>
                         <div className="modal-card modal-card-fullscreen" onClick={e => e.stopPropagation()}>
                             <div className="modal-header modal-header-stacked">
-                                <div className="modal-title">Translation Preview</div>
+                                <div className="modal-title-group" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                                    <div className="modal-title">
+                                        {pdfDocument ? "PDF & Translation Viewer" : "Translation Preview"}
+                                    </div>
+                                    {pdfDocument && (
+                                        <div className="translation-viewer-tab-controls">
+                                            <div className="translation-viewer-tab-segmented">
+                                                {translatedPDF && (
+                                                    <button
+                                                        type="button"
+                                                        className={`btn-toggle-chip ${translationViewerTab === 'translated_pdf' ? 'is-active' : ''}`}
+                                                        onClick={() => setTranslationViewerTab('translated_pdf')}
+                                                    >
+                                                        Translated PDF
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    className={`btn-toggle-chip ${translationViewerTab === 'markdown' ? 'is-active' : ''}`}
+                                                    onClick={() => setTranslationViewerTab('markdown')}
+                                                >
+                                                    Text / Markdown
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`btn-toggle-chip ${translationViewerTab === 'source_pdf' ? 'is-active' : ''}`}
+                                                    onClick={() => setTranslationViewerTab('source_pdf')}
+                                                >
+                                                    Source PDF
+                                                </button>
+                                            </div>
+                                            <div className="translation-viewer-tab-select-wrap">
+                                                <select
+                                                    className="translation-viewer-tab-select"
+                                                    value={translationViewerTab}
+                                                    onChange={e => setTranslationViewerTab(e.target.value as any)}
+                                                    aria-label="Select view mode"
+                                                >
+                                                    {translatedPDF && <option value="translated_pdf">Translated PDF</option>}
+                                                    <option value="markdown">Text / Markdown</option>
+                                                    <option value="source_pdf">Source PDF</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="modal-header-actions modal-header-actions-wrap">
-                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
-                                        <span className="material-symbols-outlined">remove</span>
-                                    </button>
-                                    <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev + 1))} title="Increase Font Size">
-                                        <span className="material-symbols-outlined">add</span>
-                                    </button>
+                                    {(!pdfDocument || translationViewerTab === 'markdown') && (
+                                        <>
+                                            <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev - 1))} title="Decrease Font Size">
+                                                <span className="material-symbols-outlined">remove</span>
+                                            </button>
+                                            <button className="icon-btn" onClick={() => setEditorFontSize(prev => clampFontSize(prev + 1))} title="Increase Font Size">
+                                                <span className="material-symbols-outlined">add</span>
+                                            </button>
+                                        </>
+                                    )}
                                     <button className="icon-btn" onClick={handleCopyTranslation} title="Copy Translation">
                                         <span className="material-symbols-outlined">copy_all</span>
                                     </button>
-                                    <button className="icon-btn" onClick={handleOpenTranslationSearchModal} title="Search Translation">
-                                        <span className="material-symbols-outlined">search</span>
-                                    </button>
+                                    {(!pdfDocument || translationViewerTab === 'markdown') && (
+                                        <button className="icon-btn" onClick={handleOpenTranslationSearchModal} title="Search Translation">
+                                            <span className="material-symbols-outlined">search</span>
+                                        </button>
+                                    )}
                                     <button className="icon-btn" onClick={() => setShowReviewNotesModal(true)} title="Open Review Notes" disabled={!hasReviewNotes}>
                                         <span className="material-symbols-outlined">summarize</span>
                                     </button>
-                                    <button className="icon-btn" onClick={handleSaveFile} title="Save to File">
+                                    <button className="icon-btn" onClick={handleSaveFile} title={pdfDocument ? "Save Translated PDF" : "Save to File"} disabled={Boolean(pdfDocument && !translatedPDF)}>
                                         <span className="material-symbols-outlined">save</span>
                                     </button>
                                     <button className="icon-btn" onClick={handleCloseTranslationViewerModal} title="Close">
@@ -5499,30 +5562,54 @@ function App() {
                                     </button>
                                 </div>
                             </div>
-                            <div className="modal-body modal-body-fullscreen translation-viewer-body">
-                                <div
-                                    ref={translationViewerRef}
-                                    className="translation-output markdown-output fullscreen-viewer"
-                                    onCopy={handleTranslationCopyEvent}
-                                    style={{ fontSize: `${editorFontSize}px` }}
-                                >
-                                    {renderMarkdown(cleanedTranslation)}
-                                </div>
-                                {translationSearchQuery && translationSearchMatchCount > 0 && (
-                                    <div className="translation-search-nav" role="status" aria-live="polite">
-                                        <button type="button" onClick={() => handleMoveTranslationSearch("prev")} title="Previous match">
-                                            <span className="material-symbols-outlined">arrow_upward</span>
-                                        </button>
-                                        <div className="translation-search-nav-count">
-                                            {translationSearchActiveIndex + 1}/{translationSearchMatchCount}
+                            <div className="modal-body modal-body-fullscreen translation-viewer-body" style={pdfDocument && translationViewerTab !== 'markdown' ? { padding: 0, overflow: 'hidden' } : {}}>
+                                {pdfDocument && translationViewerTab === 'translated_pdf' && translatedPDF ? (
+                                    <PDFPreview
+                                        dataBase64={translatedPDF.dataBase64}
+                                        documentName={translatedPDF.name}
+                                        activePage={completedPDFPages}
+                                        totalPageCount={pdfDocument.pageCount}
+                                    />
+                                ) : pdfDocument && translationViewerTab === 'source_pdf' ? (
+                                    <PDFPreview
+                                        dataBase64={pdfDocument.dataBase64}
+                                        documentName={pdfDocument.name}
+                                        activePage={1}
+                                        totalPageCount={pdfDocument.pageCount}
+                                    />
+                                ) : (
+                                    <>
+                                        <div
+                                            ref={translationViewerRef}
+                                            className="translation-output markdown-output fullscreen-viewer"
+                                            onCopy={handleTranslationCopyEvent}
+                                            style={{ fontSize: `${editorFontSize}px` }}
+                                        >
+                                            {cleanedTranslation ? renderMarkdown(cleanedTranslation) : (
+                                                <div style={{ color: "var(--text-soft)", textAlign: "center", padding: "40px 20px" }}>
+                                                    {pdfDocument
+                                                        ? (isTranslating ? "Translating PDF... Generated text will appear here." : "Press Translate to generate translation text.")
+                                                        : "No translation content available yet."}
+                                                </div>
+                                            )}
                                         </div>
-                                        <button type="button" onClick={() => handleMoveTranslationSearch("next")} title="Next match">
-                                            <span className="material-symbols-outlined">arrow_downward</span>
-                                        </button>
-                                        <button type="button" onClick={closeTranslationSearch} title="Close search">
-                                            <span className="material-symbols-outlined">close</span>
-                                        </button>
-                                    </div>
+                                        {translationSearchQuery && translationSearchMatchCount > 0 && (
+                                            <div className="translation-search-nav" role="status" aria-live="polite">
+                                                <button type="button" onClick={() => handleMoveTranslationSearch("prev")} title="Previous match">
+                                                    <span className="material-symbols-outlined">arrow_upward</span>
+                                                </button>
+                                                <div className="translation-search-nav-count">
+                                                    {translationSearchActiveIndex + 1}/{translationSearchMatchCount}
+                                                </div>
+                                                <button type="button" onClick={() => handleMoveTranslationSearch("next")} title="Next match">
+                                                    <span className="material-symbols-outlined">arrow_downward</span>
+                                                </button>
+                                                <button type="button" onClick={closeTranslationSearch} title="Close search">
+                                                    <span className="material-symbols-outlined">close</span>
+                                                </button>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         </div>
