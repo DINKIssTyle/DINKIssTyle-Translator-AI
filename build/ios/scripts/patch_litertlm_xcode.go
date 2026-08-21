@@ -82,6 +82,15 @@ func main() {
 	infoPlist = replaceOnce(infoPlist,
 		"<string>wailsapp</string>",
 		"<string>$(EXECUTABLE_NAME)</string>")
+	if !strings.Contains(infoPlist, "<key>ITSAppUsesNonExemptEncryption</key>") {
+		closingDict := strings.LastIndex(infoPlist, "</dict>")
+		if closingDict >= 0 {
+			encEntry := `    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+`
+			infoPlist = infoPlist[:closingDict] + encEntry + infoPlist[closingDict:]
+		}
+	}
 	if !strings.Contains(infoPlist, "<key>CFBundleIconName</key>") {
 		closingDict := strings.LastIndex(infoPlist, "</dict>")
 		if closingDict >= 0 {
