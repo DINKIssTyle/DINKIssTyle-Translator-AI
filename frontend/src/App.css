@@ -2195,6 +2195,7 @@ textarea {
 .settings-modal-card {
   width: 820px;
   max-width: calc(100vw - 32px);
+  height: 590px;
   max-height: min(88vh, 660px);
   display: flex;
   flex-direction: column;
@@ -2359,6 +2360,48 @@ textarea {
 .settings-tab-btn.is-active .settings-tab-desc {
   color: var(--accent);
   opacity: 0.85;
+}
+
+.modal-card-mobile-fullscreen .settings-tabs-nav {
+  width: 100%;
+  flex-direction: row;
+  border-right: none;
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  gap: 4px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  justify-content: space-around;
+  align-items: center;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.modal-card-mobile-fullscreen .settings-tabs-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.modal-card-mobile-fullscreen .settings-tab-btn {
+  flex: 1 1 0;
+  min-width: 40px;
+  height: 42px;
+  padding: 0;
+  border-radius: 10px;
+  width: auto;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+}
+
+.modal-card-mobile-fullscreen .settings-tab-label-group,
+.modal-card-mobile-fullscreen .settings-tab-title,
+.modal-card-mobile-fullscreen .settings-tab-desc {
+  display: none !important;
+}
+
+.modal-card-mobile-fullscreen .settings-tab-icon {
+  font-size: 22px;
+  margin: 0;
 }
 
 /* Content Pane */
@@ -2851,29 +2894,41 @@ textarea {
     flex-direction: row;
     border-right: none;
     border-bottom: 1px solid var(--line);
-    padding: 8px 10px;
-    gap: 6px;
+    padding: 6px 8px;
+    gap: 4px;
     overflow-x: auto;
     flex-shrink: 0;
+    justify-content: space-around;
+    align-items: center;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
 
-  .settings-tab-btn {
-    flex: 0 0 auto;
-    padding: 6px 12px;
-    border-radius: 20px;
-    width: auto;
-  }
-
-  .settings-tab-desc {
+  .settings-tabs-nav::-webkit-scrollbar {
     display: none;
   }
 
-  .settings-tab-title {
-    font-size: 0.82rem;
+  .settings-tab-btn {
+    flex: 1 1 0;
+    min-width: 40px;
+    height: 42px;
+    padding: 0;
+    border-radius: 10px;
+    width: auto;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+  }
+
+  .settings-tab-label-group,
+  .settings-tab-title,
+  .settings-tab-desc {
+    display: none !important;
   }
 
   .settings-tab-icon {
-    font-size: 18px;
+    font-size: 22px;
+    margin: 0;
   }
 
   .settings-content-pane {

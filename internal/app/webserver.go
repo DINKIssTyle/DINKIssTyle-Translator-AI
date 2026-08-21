@@ -506,15 +506,18 @@ func resolveTLSFiles(settings persistedWebServerSettings) (string, string, error
 }
 
 func (a *App) newWebServerHandler() (http.Handler, error) {
-	sub, err := fs.Sub(a.assets, "frontend/dist")
-	if err != nil {
-		return nil, err
+	var targetFS fs.FS
+	if diskDist, err := os.Stat("frontend/dist/index.html"); err == nil && !diskDist.IsDir() {
+		targetFS = os.DirFS("frontend/dist")
+	} else {
+		sub, err := fs.Sub(a.assets, "frontend/dist")
+		if err != nil {
+			return nil, err
+		}
+		targetFS = sub
 	}
-	fileServer := http.FileServer(http.FS(sub))
-	indexBytes, err := fs.ReadFile(sub, "index.html")
-	if err != nil {
-		return nil, err
-	}
+
+	fileServer := http.FileServer(http.FS(targetFS))
 
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("/api/client-config", a.handleWebClientConfig)
@@ -532,16 +535,31 @@ func (a *App) newWebServerHandler() (http.Handler, error) {
 	rootMux.Handle("/api/", a.requireWebSession(apiMux))
 	rootMux.Handle("/", a.requireWebSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cleanPath := strings.TrimPrefix(pathClean(r.URL.Path), "/")
-		if cleanPath == "" {
+		if cleanPath == "" || cleanPath == "index.html" {
+			indexBytes, err := fs.ReadFile(targetFS, "index.html")
+			if err != nil {
+				http.Error(w, "index.html not found", http.StatusNotFound)
+				return
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			_, _ = w.Write(indexBytes)
 			return
 		}
-		if _, err := fs.Stat(sub, cleanPath); err == nil {
+		if _, err := fs.Stat(targetFS, cleanPath); err == nil {
+			if strings.HasSuffix(cleanPath, ".js") || strings.HasSuffix(cleanPath, ".css") {
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		indexBytes, err := fs.ReadFile(targetFS, "index.html")
+		if err != nil {
+			http.Error(w, "index.html not found", http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		_, _ = w.Write(indexBytes)
 	})))
 

@@ -1427,6 +1427,12 @@ function App() {
         return () => mediaQuery.removeEventListener("change", handleChange);
     }, []);
 
+    useEffect(() => {
+        if (isBrowserMode && (settingsActiveTab === 'litert' || settingsActiveTab === 'remote_ai' || settingsActiveTab === 'webserver')) {
+            setSettingsActiveTab('translation');
+        }
+    }, [settingsActiveTab]);
+
     // Intercept raw clipboard paste events so WebKit/mobile browsers do not lowercase
     // colon-prefixed text (such as API keys like "sk-lm-U9z1FDXG:...") as URI schemes
     useEffect(() => {
@@ -2422,12 +2428,16 @@ function App() {
             setWindowMode("main");
             callBrowserJSON<ProviderSettings>("/api/client-config")
                 .then((settings: any) => {
-                    setProviderSettings(prev => ({
-                        ...prev,
+                    const hostConfig: ProviderSettings = {
                         ...settings,
                         apiKey: "",
                         endpoint: "",
+                    };
+                    setProviderSettings(prev => ({
+                        ...prev,
+                        ...hostConfig,
                     }));
+                    void fetchModels(hostConfig);
                 })
                 .catch((err: any) => {
                     console.error(err);
@@ -3124,7 +3134,9 @@ function App() {
                 setProviderSettings(prev => {
                     let nextModel = prev.model || activeSettings.model;
                     const ids = list.map(item => item.id);
-                    if (!nextModel || !ids.includes(nextModel)) {
+                    if (isBrowserMode && activeSettings.model && ids.includes(activeSettings.model)) {
+                        nextModel = activeSettings.model;
+                    } else if (!nextModel || !ids.includes(nextModel)) {
                         if (storedSettings?.selectedModel && ids.includes(storedSettings.selectedModel)) {
                             nextModel = storedSettings.selectedModel;
                         } else if (activeSettings.model && ids.includes(activeSettings.model)) {
@@ -5579,6 +5591,8 @@ function App() {
                                         type="button"
                                         className={`settings-tab-btn ${settingsActiveTab === 'appearance' ? 'is-active' : ''}`}
                                         onClick={() => setSettingsActiveTab('appearance')}
+                                        title="Appearance"
+                                        aria-label="Appearance"
                                     >
                                         <span className="material-symbols-outlined settings-tab-icon">palette</span>
                                         <div className="settings-tab-label-group">
@@ -5591,6 +5605,8 @@ function App() {
                                         type="button"
                                         className={`settings-tab-btn ${settingsActiveTab === 'translation' ? 'is-active' : ''}`}
                                         onClick={() => setSettingsActiveTab('translation')}
+                                        title="Translation"
+                                        aria-label="Translation"
                                     >
                                         <span className="material-symbols-outlined settings-tab-icon">translate</span>
                                         <div className="settings-tab-label-group">
@@ -5599,35 +5615,45 @@ function App() {
                                         </div>
                                     </button>
 
-                                    <button
-                                        type="button"
-                                        className={`settings-tab-btn ${settingsActiveTab === 'litert' ? 'is-active' : ''}`}
-                                        onClick={() => setSettingsActiveTab('litert')}
-                                    >
-                                        <span className="material-symbols-outlined settings-tab-icon">bolt</span>
-                                        <div className="settings-tab-label-group">
-                                            <span className="settings-tab-title">LiteRT-LM</span>
-                                            <span className="settings-tab-desc">On-device AI models</span>
-                                        </div>
-                                    </button>
+                                    {!isBrowserMode && (
+                                        <button
+                                            type="button"
+                                            className={`settings-tab-btn ${settingsActiveTab === 'litert' ? 'is-active' : ''}`}
+                                            onClick={() => setSettingsActiveTab('litert')}
+                                            title="LiteRT-LM"
+                                            aria-label="LiteRT-LM"
+                                        >
+                                            <span className="material-symbols-outlined settings-tab-icon">bolt</span>
+                                            <div className="settings-tab-label-group">
+                                                <span className="settings-tab-title">LiteRT-LM</span>
+                                                <span className="settings-tab-desc">On-device AI models</span>
+                                            </div>
+                                        </button>
+                                    )}
 
-                                    <button
-                                        type="button"
-                                        className={`settings-tab-btn ${settingsActiveTab === 'remote_ai' ? 'is-active' : ''}`}
-                                        onClick={() => setSettingsActiveTab('remote_ai')}
-                                    >
-                                        <span className="material-symbols-outlined settings-tab-icon">settings_input_component</span>
-                                        <div className="settings-tab-label-group">
-                                            <span className="settings-tab-title">LLM Configuration</span>
-                                            <span className="settings-tab-desc">OpenAI & LM Studio</span>
-                                        </div>
-                                    </button>
+                                    {!isBrowserMode && (
+                                        <button
+                                            type="button"
+                                            className={`settings-tab-btn ${settingsActiveTab === 'remote_ai' ? 'is-active' : ''}`}
+                                            onClick={() => setSettingsActiveTab('remote_ai')}
+                                            title="LLM Configuration"
+                                            aria-label="LLM Configuration"
+                                        >
+                                            <span className="material-symbols-outlined settings-tab-icon">settings_input_component</span>
+                                            <div className="settings-tab-label-group">
+                                                <span className="settings-tab-title">LLM Configuration</span>
+                                                <span className="settings-tab-desc">OpenAI & LM Studio</span>
+                                            </div>
+                                        </button>
+                                    )}
 
-                                    {!isMobilePlatform && (
+                                    {!isMobilePlatform && !isBrowserMode && (
                                         <button
                                             type="button"
                                             className={`settings-tab-btn ${settingsActiveTab === 'webserver' ? 'is-active' : ''}`}
                                             onClick={() => setSettingsActiveTab('webserver')}
+                                            title="Web Server"
+                                            aria-label="Web Server"
                                         >
                                             <span className="material-symbols-outlined settings-tab-icon">dns</span>
                                             <div className="settings-tab-label-group">
@@ -5641,6 +5667,8 @@ function App() {
                                         type="button"
                                         className={`settings-tab-btn ${settingsActiveTab === 'about' ? 'is-active' : ''}`}
                                         onClick={() => setSettingsActiveTab('about')}
+                                        title="About"
+                                        aria-label="About"
                                     >
                                         <span className="material-symbols-outlined settings-tab-icon">info</span>
                                         <div className="settings-tab-label-group">
@@ -5824,7 +5852,7 @@ function App() {
                                     )}
 
                                     {/* --- Tab 3: LiteRT-LM (On-Device) --- */}
-                                    {settingsActiveTab === 'litert' && (
+                                    {settingsActiveTab === 'litert' && !isBrowserMode && (
                                         <div className="settings-section-view">
                                             <div className="settings-section-header">
                                                 <span className="settings-section-eyebrow">ON-DEVICE INFERENCE</span>
@@ -6011,7 +6039,7 @@ function App() {
                                                                 {downloadProgress?.status === "cancelled" && (downloadProgress?.downloaded || 0) > 0
                                                                     ? `Resume Download (${(downloadProgress.downloaded / (1024 * 1024)).toFixed(1)} MB saved)`
                                                                     : "Download Gemma 4 E2B (.litertlm)"}
-                                                            </button>
+                                                                </button>
                                                         </div>
                                                     )}
                                                 </div>
@@ -6020,7 +6048,7 @@ function App() {
                                     )}
 
                                     {/* --- Tab 4: Remote AI (OpenAI & LM Studio) --- */}
-                                    {settingsActiveTab === 'remote_ai' && (() => {
+                                    {settingsActiveTab === 'remote_ai' && !isBrowserMode && (() => {
                                         const activeRemoteMode = remoteAISubTab;
                                         const currentProfile = providerProfiles[activeRemoteMode] || DEFAULT_PROVIDER_PROFILES[activeRemoteMode];
                                         const isCurrentlyActiveEngine = providerSettings.mode === activeRemoteMode;
@@ -6173,7 +6201,7 @@ function App() {
                                     })()}
 
                                     {/* --- Tab 5: Web Server (Desktop only) --- */}
-                                    {settingsActiveTab === 'webserver' && !isMobilePlatform && (
+                                    {settingsActiveTab === 'webserver' && !isMobilePlatform && !isBrowserMode && (
                                         <div className="settings-section-view">
                                             <div className="settings-section-header">
                                                 <span className="settings-section-eyebrow">REMOTE ACCESS</span>
